@@ -1,0 +1,242 @@
+[
+ {
+  "key": "poop",
+  "name": "奶屎",
+  "w": 378,
+  "h": 420,
+  "aspect": 0.9,
+  "baseline": 0.99897
+ },
+ {
+  "key": "angry",
+  "name": "奶怒",
+  "w": 350,
+  "h": 420,
+  "aspect": 0.83333,
+  "baseline": 1.0
+ },
+ {
+  "key": "dolphin",
+  "name": "奶豚",
+  "w": 257,
+  "h": 420,
+  "aspect": 0.6119,
+  "baseline": 1.0
+ },
+ {
+  "key": "heart",
+  "name": "小奶比心",
+  "w": 294,
+  "h": 420,
+  "aspect": 0.7,
+  "baseline": 0.99745
+ },
+ {
+  "key": "sphinx",
+  "name": "奶狮子",
+  "w": 475,
+  "h": 420,
+  "aspect": 1.13095,
+  "baseline": 1.0
+ },
+ {
+  "key": "pisces",
+  "name": "奶双鱼",
+  "w": 337,
+  "h": 420,
+  "aspect": 0.80238,
+  "baseline": 0.9987
+ },
+ {
+  "key": "taurus",
+  "name": "奶金牛",
+  "w": 334,
+  "h": 420,
+  "aspect": 0.79524,
+  "baseline": 0.99857
+ },
+ {
+  "key": "aries",
+  "name": "奶白羊",
+  "w": 496,
+  "h": 420,
+  "aspect": 1.18095,
+  "baseline": 0.99857
+ },
+ {
+  "key": "aquarius",
+  "name": "奶水瓶",
+  "w": 313,
+  "h": 420,
+  "aspect": 0.74524,
+  "baseline": 1.0
+ },
+ {
+  "key": "cancer",
+  "name": "奶巨蟹",
+  "w": 564,
+  "h": 420,
+  "aspect": 1.34286,
+  "baseline": 0.99838
+ },
+ {
+  "key": "gemini",
+  "name": "奶双子",
+  "w": 489,
+  "h": 420,
+  "aspect": 1.16429,
+  "baseline": 0.99814
+ },
+ {
+  "key": "libra",
+  "name": "奶天秤",
+  "w": 471,
+  "h": 420,
+  "aspect": 1.12143,
+  "baseline": 1.0
+ },
+ {
+  "key": "virgo",
+  "name": "奶处女",
+  "w": 370,
+  "h": 420,
+  "aspect": 0.88095,
+  "baseline": 1.0
+ },
+ {
+  "key": "capricorn",
+  "name": "奶摩羯",
+  "w": 412,
+  "h": 420,
+  "aspect": 0.98095,
+  "baseline": 1.0
+ },
+ {
+  "key": "sagittarius",
+  "name": "奶射手",
+  "w": 318,
+  "h": 420,
+  "aspect": 0.75714,
+  "baseline": 1.0
+ },
+ {
+  "key": "scorpio",
+  "name": "奶天蝎",
+  "w": 430,
+  "h": 420,
+  "aspect": 1.02381,
+  "baseline": 1.0
+ },
+ {
+  "key": "dog",
+  "name": "奶狗",
+  "w": 353,
+  "h": 420,
+  "aspect": 0.84048,
+  "baseline": 0.99905
+ },
+ {
+  "key": "pig",
+  "name": "奶猪",
+  "w": 512,
+  "h": 420,
+  "aspect": 1.21905,
+  "baseline": 0.99873
+ },
+ {
+  "key": "rooster",
+  "name": "奶鸡",
+  "w": 378,
+  "h": 420,
+  "aspect": 0.9,
+  "baseline": 0.99915
+ },
+ {
+  "key": "monkey",
+  "name": "奶猴",
+  "w": 400,
+  "h": 420,
+  "aspect": 0.95238,
+  "baseline": 0.99914
+ },
+ {
+  "key": "goat",
+  "name": "奶羊",
+  "w": 549,
+  "h": 420,
+  "aspect": 1.30714,
+  "baseline": 0.99886
+ },
+ {
+  "key": "horse",
+  "name": "奶马",
+  "w": 406,
+  "h": 420,
+  "aspect": 0.96667,
+  "baseline": 0.99911
+ },
+ {
+  "key": "snake",
+  "name": "奶蛇",
+  "w": 275,
+  "h": 420,
+  "aspect": 0.65476,
+  "baseline": 0.99916
+ },
+ {
+  "key": "dragon",
+  "name": "奶loong",
+  "w": 361,
+  "h": 420,
+  "aspect": 0.85952,
+  "baseline": 0.9991
+ },
+ {
+  "key": "tiger",
+  "name": "奶虎",
+  "w": 382,
+  "h": 420,
+  "aspect": 0.90952,
+  "baseline": 0.99908
+ },
+ {
+  "key": "cow",
+  "name": "奶牛",
+  "w": 317,
+  "h": 420,
+  "aspect": 0.75476,
+  "baseline": 0.99905
+ },
+ {
+  "key": "mouse",
+  "name": "奶鼠",
+  "w": 362,
+  "h": 420,
+  "aspect": 0.8619,
+  "baseline": 0.99908
+ },
+ {
+  "key": "rabbit",
+  "name": "奶兔",
+  "w": 225,
+  "h": 420,
+  "aspect": 0.53571,
+  "baseline": 0.99912
+ },
+ {
+  "key": "egg",
+  "name": "奶蛋",
+  "w": 379,
+  "h": 420,
+  "aspect": 0.90238,
+  "baseline": 0.99923
+ },
+ {
+  "key": "frog",
+  "name": "经典奶蛙",
+  "w": 218,
+  "h": 420,
+  "aspect": 0.51905,
+  "baseline": 0.99953
+ }
+]

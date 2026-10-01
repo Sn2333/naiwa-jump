@@ -1,0 +1,7 @@
+# 统一换行符，避免 Windows 上 checkout 出 CRLF 把 shell 脚本弄坏
+* text=auto eol=lf
+
+# 二进制资源别做换行转换
+*.png binary
+*.webp binary
+*.ico binary

@@ -1,0 +1,29 @@
+# 开发期产物
+dev/_shot.html
+dev/shots/
+_screenshots/
+*.old
+*.log
+
+# 原始立绘（60 个 PNG/WebP + 一张主视觉，约 4MB）
+# 版权归各原作者、且体积大，不入代码库：仓库只放已经生成好的
+# js/sprite_data.js（30 角色的 WebP base64）。缺了这些图只是跑不了
+# dev/extract_chars.py，玩游戏和打包单文件版都不受影响。
+# README 里的配图走线上地址（部署时会一块上传）。
+assets/
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
