@@ -28,6 +28,20 @@ sleep 2
 "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html" "$SHOT_DIR/_check_module.png" 3500 || rc=1
 echo
 
+# 命中/蓄力实测：拦"看不见的透明层吃掉点击"（面板内部的 pointer-events:auto
+# 会从父级 .hidden 的 none 里恢复命中，3D 画面正常但按哪儿都没反应）
+echo "### 点击命中 / 蓄力实测 ###"
+CLICK_OUT=$(PROBE_RUN="$(cat dev/click_probe.js)" \
+  "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html" "$SHOT_DIR/_check_click.png" 3500 2>&1)
+if echo "$CLICK_OUT" | grep -q '"ok":true'; then
+  echo "  ✓ 命中 canvas、蓄力生效、跳跃落地"
+else
+  echo "  ✗ 点击被遮挡或蓄力失效："
+  echo "$CLICK_OUT" | grep -A2 "PROBE_RUN 结果" || echo "$CLICK_OUT" | tail -20
+  rc=1
+fi
+echo
+
 echo "### hit regression ###"
 "$NODE" dev/test_hit.mjs || rc=1
 echo

@@ -6,7 +6,7 @@ import * as THREE from './vendor/three.module.js';
 import { Character3D, charList } from './character.js';
 import { DEFAULT_CHAR } from './sprite_data.js';
 import { bgList, bgDef, DEFAULT_BG } from './theme.js';
-import { api, session, loadSession, isLoggedIn, logout, register, login, submitScore, leaderboard } from './api.js';
+import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard } from './api.js';
 import { sound } from './audio.js';
 import { edgeOver, perfectTol } from './hit.js';
 
@@ -773,18 +773,10 @@ class Game {
       accountPanel: document.getElementById('accountPanel'),
       accountClose: document.getElementById('accountClose'),
       acctWho: document.getElementById('acctWho'),
-      acctTabs: document.getElementById('acctTabs'),
-      paneLogin: document.getElementById('paneLogin'),
-      paneReg: document.getElementById('paneReg'),
       acctMsg: document.getElementById('acctMsg'),
-      liNick: document.getElementById('liNick'),
-      liPwd: document.getElementById('liPwd'),
-      liGo: document.getElementById('liGo'),
-      rgNick: document.getElementById('rgNick'),
-      rgPwd: document.getElementById('rgPwd'),
-      rgPwd2: document.getElementById('rgPwd2'),
-      rgGo: document.getElementById('rgGo'),
-      logoutBtn: document.getElementById('logoutBtn'),
+      nickInput: document.getElementById('nickInput'),
+      nickGo: document.getElementById('nickGo'),
+      nickClear: document.getElementById('nickClear'),
       rankBtn: document.getElementById('rankBtn'),
       rankPanel: document.getElementById('rankPanel'),
       rankClose: document.getElementById('rankClose'),
@@ -811,8 +803,8 @@ class Game {
     this.charKey = localStorage.getItem('jump3d_char') || DEFAULT_CHAR;
     /* 背景：默认奶油黄 */
     this.bgKey = localStorage.getItem('jump3d_bg') || DEFAULT_BG;
-    /* 账号：读回上次的登录态；没登录就是游客，照样能玩，只是成绩不上榜 */
-    loadSession();
+    /* 昵称：存在本机，填了才会把成绩传到全服榜；没填就是纯本地玩 */
+    loadProfile();
     this.rankBusy = false;
     this.state = 'start';
     this.score = 0;
@@ -844,7 +836,7 @@ class Game {
     this.setupAccountPanel();
     this.watchPanels();
     this.applyBg(this.bgKey);     // 会顺带把雾色也对齐，必须在 setupScene 之后
-    this.refreshAccountUI();
+    this.refreshNickUI();
     this.resetWorld();
     this.dom.best.textContent = this.best;
 
@@ -880,28 +872,20 @@ class Game {
       this.buildBgGrid();
     }
     if (q.has('bgpanel')) setTimeout(() => this.openBgPanel(), 120);
-    // ?account 掀开账号面板、?rank 掀开排行榜；?login=昵称:密码 直接登录（截图用）
-    if (q.has('account')) setTimeout(() => this.openAccountPanel(), 120);
-    if (q.has('rank')) setTimeout(() => this.openRankPanel(), 120);
-    if (q.has('login')) {
-      const [n, p] = String(q.get('login')).split(':');
+    /* ?nick=名字 走一遍「填昵称 → 保存」的真实流程，纯粹为了无头截图和线上验证
+     * 能一次性进到「有昵称」的状态（结果落在本机 localStorage）。
+     * 必须排在 ?rank 前面：同一个延迟下按注册顺序执行，先有昵称，榜单里
+     * 才认得出「我」是哪一行。 */
+    if (q.has('nick')) {
+      const n = String(q.get('nick'));
       setTimeout(() => {
-        this.dom.liNick.value = n; this.dom.liPwd.value = p || '';
-        this.doLogin();
+        this.dom.nickInput.value = n;
+        this.saveNick();
       }, 120);
     }
-    /* ?reg=昵称:密码 直接注册 —— 和 ?login 对称，纯粹为了无头截图能一次性
-     * 走到"已登录"状态（本地模式下注册结果只落在这台设备的 localStorage）。 */
-    if (q.has('reg')) {
-      const [n, p] = String(q.get('reg')).split(':');
-      setTimeout(() => {
-        this.switchAcctTab('reg');
-        this.dom.rgNick.value = n;
-        this.dom.rgPwd.value = p || '';
-        this.dom.rgPwd2.value = p || '';
-        this.doRegister();
-      }, 120);
-    }
+    // ?account 掀开昵称面板、?rank 掀开排行榜
+    if (q.has('account')) setTimeout(() => this.openAccountPanel(), 160);
+    if (q.has('rank')) setTimeout(() => this.openRankPanel(), 160);
     /* ?seedrank=N 往本地榜单塞 N 条假数据，只为截图验证榜单排版；
      * 云端模式下不生效（不碰任何网络请求）。 */
     if (q.has('seedrank') && !api.online) {
@@ -1195,9 +1179,9 @@ class Game {
     sound.pick();
   }
 
-  /* ---------------- 账号 / 排行榜 ---------------- */
-  /* 游客也能完整玩，只是成绩不上传。注册只要昵称 + 密码：
-   * 昵称就是唯一登录名，所以"昵称不可重复"由后端保证（本地模式由本地表保证）。 */
+  /* ---------------- 昵称 / 排行榜 ---------------- */
+  /* 没有账号系统：昵称和最高成绩都存在本机，填了昵称成绩才会上全服榜。
+   * 不填也能完整玩，只是榜上没有你的名字。 */
   setupAccountPanel() {
     const d = this.dom;
     d.accountBtn.addEventListener('click', () => this.openAccountPanel());
@@ -1211,28 +1195,14 @@ class Game {
       if (e.target === d.rankPanel) this.closeRankPanel();
     });
 
-    for (const tab of d.acctTabs.querySelectorAll('.tab')) {
-      tab.addEventListener('click', () => this.switchAcctTab(tab.dataset.tab));
-    }
-    d.liGo.addEventListener('click', () => this.doLogin());
-    d.rgGo.addEventListener('click', () => this.doRegister());
-    d.logoutBtn.addEventListener('click', () => {
-      logout();
-      this.acctMsg('已经退出，现在是游客');
-      this.refreshAccountUI();
+    d.nickGo.addEventListener('click', () => this.saveNick());
+    /* 回车直接保存，省得手机上还要去点按钮 */
+    d.nickInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveNick(); });
+    d.nickClear.addEventListener('click', () => {
+      clearNick();
+      this.acctMsg('已清除昵称，成绩改成只存本机');
+      this.refreshNickUI();
     });
-    // 回车直接提交，省得手机上还要去点按钮
-    d.liPwd.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.doLogin(); });
-    d.rgPwd2.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.doRegister(); });
-  }
-
-  switchAcctTab(name) {
-    for (const tab of this.dom.acctTabs.querySelectorAll('.tab')) {
-      tab.classList.toggle('on', tab.dataset.tab === name);
-    }
-    this.dom.paneLogin.classList.toggle('hidden', name !== 'login');
-    this.dom.paneReg.classList.toggle('hidden', name !== 'reg');
-    this.acctMsg('');
   }
 
   acctMsg(text, kind = '') {
@@ -1241,20 +1211,19 @@ class Game {
     el.className = kind;
   }
 
-  /** 把登录态同步到三处界面：昵称标签、账号面板、结束页的提示 */
-  refreshAccountUI() {
+  /** 把昵称同步到三处界面：面板、主页标签、按钮文案 */
+  refreshNickUI() {
     const d = this.dom;
-    const on = isLoggedIn();
+    const on = !!profile.nick;
     d.acctWho.innerHTML = on
-      ? `当前登录：<b>${escapeHTML(session.nick)}</b>`
-      : (api.online
-        ? '现在是<b>游客</b>，成绩不会上榜'
-        : '现在是<b>游客</b>（本地模式，榜单只在本机）');
-    d.logoutBtn.classList.toggle('hidden', !on);
-    d.accountBtn.textContent = on ? '我 的 账 号' : '登 录 / 注 册';
+      ? `当前昵称 <b>${escapeHTML(profile.nick)}</b>`
+      : '还没有设昵称';
+    d.nickInput.value = profile.nick || '';
+    d.nickClear.classList.toggle('hidden', !on);
+    d.accountBtn.textContent = on ? '我 的 昵 称' : '设 置 昵 称';
 
     d.userTag.classList.toggle('hidden', !on);
-    if (on) d.userTag.innerHTML = `已登录 <b>${escapeHTML(session.nick)}</b>`;
+    if (on) d.userTag.innerHTML = `昵称 <b>${escapeHTML(profile.nick)}</b>`;
   }
 
   openAccountPanel() {
@@ -1263,51 +1232,28 @@ class Game {
     this.dom.rankPanel.classList.add('hidden');
     this.dom.accountPanel.classList.remove('hidden');
     this.acctMsg('');
-    this.refreshAccountUI();
+    this.refreshNickUI();
   }
 
   closeAccountPanel() { this.dom.accountPanel.classList.add('hidden'); }
 
-  async doRegister() {
-    const d = this.dom;
-    d.rgGo.disabled = true;
-    this.acctMsg('注册中…');
+  /** 保存昵称。纯本机操作，不走网络；存完顺手把本机最高成绩补交一次，
+   *  免得玩家刚填完昵称、榜单上却还没有自己的分数。 */
+  saveNick() {
     try {
-      const r = await register(d.rgNick.value, d.rgPwd.value, d.rgPwd2.value);
-      d.rgPwd.value = ''; d.rgPwd2.value = '';
-      this.acctMsg(`注册成功，欢迎 ${r.nick}`, 'ok');
-      this.refreshAccountUI();
-      sound.pick();
-      // 注册完顺手把这局的最佳成绩补交一次，别让人觉得白注册了
-      this.pushBest();
-    } catch (e) {
-      this.acctMsg(e.message, 'err');
-    } finally {
-      d.rgGo.disabled = false;
-    }
-  }
-
-  async doLogin() {
-    const d = this.dom;
-    d.liGo.disabled = true;
-    this.acctMsg('登录中…');
-    try {
-      const r = await login(d.liNick.value, d.liPwd.value);
-      d.liPwd.value = '';
-      this.acctMsg(`登录成功，欢迎回来 ${r.nick}`, 'ok');
-      this.refreshAccountUI();
+      const n = setNick(this.dom.nickInput.value);
+      this.acctMsg(`昵称已保存：${n}`, 'ok');
+      this.refreshNickUI();
       sound.pick();
       this.pushBest();
     } catch (e) {
       this.acctMsg(e.message, 'err');
-    } finally {
-      d.liGo.disabled = false;
     }
   }
 
-  /** 把本机最佳成绩补交一次（登录时用；服务端只保留更高的那个） */
+  /** 把本机最高成绩补交一次（刚设完昵称时用；服务端只保留更高的那个） */
   pushBest() {
-    if (!isLoggedIn() || this.best <= 0) return;
+    if (!profile.nick || this.best <= 0) return;
     submitScore(this.best).catch(() => { /* 补交失败不打扰玩家 */ });
   }
 
@@ -1351,7 +1297,7 @@ class Game {
       const { list, me, local } = await leaderboard(100);
       this.dom.rankMe.innerHTML = me
         ? `我 的 名 次 <b>#${me.rank}</b> · 最佳 <b>${me.best}</b> 分`
-        : (isLoggedIn() ? '还没有成绩，先玩一局' : '登录之后成绩才能上榜');
+        : (profile.nick ? '还没有成绩，先玩一局' : '设个昵称，成绩就能上榜');
       if (!list.length) {
         this.dom.rankList.innerHTML = '<div class="rankEmpty">榜单还是空的<br>快去打一个第一名出来</div>';
       } else {
@@ -1782,13 +1728,13 @@ class Game {
     if (this.dom.overPeach) {
       this.dom.overPeach.textContent = this.peaches > 0 ? `🍑 黄桃 ×${this.peaches}` : '';
     }
-    /* 上报成绩：只有登录用户才传，游客的成绩留在本机。
+    /* 上报成绩：填了昵称才会传，没填就只留在本机。
      * 先清空上一局的提示，避免网络慢的时候还挂着旧名次。 */
     const rk = this.dom.overRank;
     if (rk) {
       rk.textContent = '';
-      if (!isLoggedIn()) {
-        rk.innerHTML = '登录后成绩可以上全网排行榜';
+      if (!profile.nick) {
+        rk.innerHTML = '设个昵称，成绩就能上全网排行榜';
       } else if (this.score > 0) {
         rk.textContent = '正在提交成绩…';
         submitScore(this.score).then((r) => {

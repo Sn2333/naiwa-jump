@@ -8,7 +8,7 @@
 
 - 30 只「奶系」角色，全部自由选择，用纸片人 billboard 建模
 - 25 套纯色 / 渐变背景，默认奶油黄，UI 明暗跟着背景自动翻
-- 昵称 + 密码注册登录（不要手机号、不要邮箱），昵称全服唯一
+- 不注册、不要密码、不要手机号邮箱：填个昵称就能上榜，昵称和最高成绩存在本机
 - 全服排行榜，展示所有玩家的最好成绩
 - 单文件离线版：`奶蛙一跳.html` 双击就能玩，不需要联网
 
@@ -25,7 +25,7 @@ index.html          页面骨架 + 全部样式（主题变量集中在 :root �
 js/game.js          主逻辑：状态机、镜头、输入、计分、各类面板
 js/character.js     纸片人角色：单位方片 + mesh.scale，换角色只换贴图
 js/theme.js         背景主题表（25 套，含雾色）
-js/api.js           账号 + 排行榜适配层（云服务 / 本地双模式）
+js/api.js           昵称 + 排行榜适配层（云服务 / 本地双模式）
 js/hit.js           落点判定（圆砖、方块、八棱柱、弹簧砖、迷你砖、移动砖）
 js/audio.js         WebAudio 音效
 js/sprite_data.js   30 角色的 WebP base64（由 dev/extract_chars.py 生成）
@@ -74,23 +74,26 @@ module 形态一加载就 `ReferenceError`，整个游戏白屏。所以「打�
 | `gap=` `kind=` `r=` `trait=` `plain` | 固定砖块类型 / 半径 / 特色，跑可复现的落点用例 |
 | `char=<key>` `panel` | 换角色 / 掀开角色面板 |
 | `bg=<key>` `bgpanel` | 换背景 / 掀开背景面板 |
-| `account` `reg=昵称:密码` `login=昵称:密码` | 掀开账号面板 / 直接注册 / 直接登录（截图用） |
+| `account` `nick=<名字>` | 掀开昵称面板 / 直接保存昵称（截图与线上验证用） |
 | `rank` `seedrank=<n>` | 掀开排行榜 / 往本地榜单塞假数据 |
 
 ## 后端
 
-线上后端是 WorkBuddy 云服务（腾讯云托管）里的 PostgreSQL。账号体系是自建的 ——
-云端内置 Auth 只支持邮箱登录，而这里要的是「昵称 + 密码、不要手机号不要邮箱」，所以：
+线上后端是 WorkBuddy 云服务（腾讯云托管）里的 PostgreSQL，只干一件事：让「最好成绩」
+这张榜是全网的。**没有账号系统** —— 不注册、不登录、不存密码，昵称和最高成绩都存在
+玩家的浏览器里（`localStorage`）。
 
-- 三张表 `players` / `sessions` / `scores` 全部 **server-only**：开了 RLS 但一条策略都不建、
-  也不给 `anon` / `authenticated` 授权，客户端连读都读不到；
-- 四个 `SECURITY DEFINER` 函数承担全部校验：`jump_register` / `jump_login` /
-  `jump_submit` / `jump_rank`；
-- 密码走服务端 `crypt()` + `gen_salt('bf')`（bcrypt），**哈希永远不出数据库**，
-  客户端只拿得到一个 192 位随机 token；token 是不是真的由服务端每次写成绩时校验；
-- 昵称唯一由 `UNIQUE` 索引保证，并发注册也不会重名。
+- 一张表 `board`（`nick` 主键 / `best` / `updated_at`）**server-only**：开了 RLS 但一条
+  策略都不建、也不给 `anon` / `authenticated` 授权，客户端连读都读不到；
+- 两个 `SECURITY DEFINER` 函数承担全部校验与写入：
+  - `jump_submit(nick, score)` —— 按昵称 upsert，只保留更高分，返回我的名次
+  - `jump_rank(limit, nick)` —— 全服榜 + 我的名次
+- 昵称的字符集和长度在服务端再校验一遍（不信客户端），分数上限也钳一次。
 
-没有云配置时（双击单文件版、SDK 没加载出来、离线）自动落到本地模式：账号和成绩写
+这个设计有个明确的取舍：**昵称就是身份**。所以同一个人换个浏览器、或者另一个人用了
+同样的昵称，成绩会并到同一行（取更高的那个）。对一个休闲小游戏来说这比「注册登录」划算得多。
+
+没有云配置时（双击单文件版、SDK 没加载出来、离线）自动落到本地模式：昵称和成绩写
 `localStorage`，界面完全一样，只是榜单只统计本机 —— 界面上会明确标出来。
 
 ## 许可

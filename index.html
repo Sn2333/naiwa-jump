@@ -44,6 +44,9 @@ if (location.search.indexOf('dbg') >= 0) {
     --scrim-screen: radial-gradient(120% 90% at 50% 42%, rgba(20, 26, 56, .18) 0%, rgba(10, 13, 30, .78) 78%);
     --scrim-over: radial-gradient(110% 80% at 50% 45%, rgba(22, 28, 58, .66), rgba(8, 10, 24, .86));
     --scrim-panel: linear-gradient(180deg, rgba(10, 13, 30, .82) 0%, rgba(10, 13, 30, .62) 32%, rgba(10, 13, 30, .30) 62%, rgba(10, 13, 30, .74) 100%);
+    /* 昵称/榜单这种"纯读文字、不需要看 3D 场景"的面板，底子要实一些，
+       否则砖块会从按钮和输入框中间穿过去，看着像叠图 */
+    --scrim-solid: linear-gradient(180deg, rgba(10, 13, 30, .95) 0%, rgba(10, 13, 30, .90) 30%, rgba(10, 13, 30, .86) 64%, rgba(10, 13, 30, .93) 100%);
     /* 榜单/账号这种"要读文字"的面板，行底必须够实 —— 半透明行叠在 3D 场景上没法看 */
     --row-bg: rgba(18, 22, 44, .86);
     --row-line: rgba(255, 255, 255, .12);
@@ -74,6 +77,7 @@ if (location.search.indexOf('dbg') >= 0) {
     --scrim-screen: radial-gradient(120% 90% at 50% 42%, rgba(255, 250, 235, .34) 0%, rgba(255, 243, 214, .84) 78%);
     --scrim-over: radial-gradient(110% 80% at 50% 45%, rgba(255, 250, 236, .74), rgba(255, 240, 205, .92));
     --scrim-panel: linear-gradient(180deg, rgba(255, 249, 232, .90) 0%, rgba(255, 247, 226, .70) 32%, rgba(255, 245, 220, .40) 62%, rgba(255, 247, 226, .82) 100%);
+    --scrim-solid: linear-gradient(180deg, rgba(255, 251, 240, .97) 0%, rgba(255, 249, 234, .94) 30%, rgba(255, 248, 231, .92) 64%, rgba(255, 251, 240, .96) 100%);
     --row-bg: rgba(255, 252, 245, .94);
     --row-line: rgba(150, 118, 50, .22);
     --row-me-bg: rgba(255, 214, 130, .72);
@@ -166,7 +170,13 @@ if (location.search.indexOf('dbg') >= 0) {
     border: 1px solid var(--glass-line);
     transition: opacity .5s ease;
   }
+  /* 隐藏必须"连子树一起禁用指针事件"。
+   * 面板内部（#charGrid/#bgGrid、.acctBody、#rankList）为了能滚动各自设了
+   * pointer-events: auto，而 CSS 允许子元素从父级的 none 里恢复命中 ——
+   * 结果面板一隐藏，就有几个看不见的透明层盖在屏幕中央，把游戏点击全吃掉。
+   * 症状：3D 画面完全正常，但按哪儿都没反应（elementFromPoint 命中 #rankList）。 */
   .hidden { opacity: 0 !important; pointer-events: none !important; }
+  .hidden * { pointer-events: none !important; }
 
   /* ---------------- 弹出文字 ---------------- */
   #popLayer { position: fixed; inset: 0; pointer-events: none; z-index: 11; }
@@ -305,7 +315,7 @@ if (location.search.indexOf('dbg') >= 0) {
     position: fixed; inset: 0; z-index: 30;
     display: flex; flex-direction: column; align-items: center;
     padding-top: max(28px, env(safe-area-inset-top));
-    background: var(--scrim-panel);
+    background: var(--scrim-solid);
     backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
     transition: opacity .25s ease;
   }
@@ -320,17 +330,7 @@ if (location.search.indexOf('dbg') >= 0) {
   }
   #acctWho { text-align: center; font-size: 14px; color: var(--ink-dim); min-height: 20px; line-height: 1.6; }
   #acctWho b { color: var(--accent); }
-  .tabs { display: flex; gap: 8px; }
-  .tab {
-    flex: 1; padding: 10px 0; border-radius: 999px; cursor: pointer;
-    background: var(--cell-bg); border: 1px solid var(--glass-line);
-    color: var(--ink-dim); font: inherit; font-size: 14px; letter-spacing: 1px;
-  }
-  .tab.on {
-    background: var(--cell-on-bg); border-color: var(--cell-on-line);
-    color: var(--cell-on-ink); font-weight: 700;
-  }
-  .tabPane { display: flex; flex-direction: column; gap: 10px; }
+  .acctHint { font-size: 12.5px; color: var(--ink-dim); opacity: .8; line-height: 1.65; text-align: center; }
   .field {
     width: 100%; padding: 13px 16px; border-radius: 12px; font: inherit; font-size: 15px;
     background: var(--glass); border: 1px solid var(--glass-line); color: var(--ink);
@@ -396,7 +396,7 @@ if (location.search.indexOf('dbg') >= 0) {
     <button id="bgBtn" class="btn ghost ui-block">选 择 背 景</button>
   </div>
   <div class="btnRow">
-    <button id="accountBtn" class="btn ghost ui-block">登 录 / 注 册</button>
+    <button id="accountBtn" class="btn ghost ui-block">设 置 昵 称</button>
     <button id="rankBtn" class="btn ghost ui-block">排 行 榜</button>
   </div>
   <div id="userTag" class="hidden"></div>
@@ -420,32 +420,16 @@ if (location.search.indexOf('dbg') >= 0) {
 
 <div id="accountPanel" class="hidden ui-block">
   <div class="panelHead">
-    <h3>账号</h3>
+    <h3>昵称</h3>
     <button id="accountClose" class="ui-block" title="关闭">✕</button>
   </div>
   <div class="acctBody">
     <div id="acctWho"></div>
-
-    <div class="tabs" id="acctTabs">
-      <button class="tab on ui-block" data-tab="login" type="button">登 录</button>
-      <button class="tab ui-block" data-tab="reg" type="button">注 册</button>
-    </div>
-
-    <div class="tabPane" id="paneLogin">
-      <input id="liNick" class="field ui-block" type="text" placeholder="昵称" maxlength="12" autocomplete="username" />
-      <input id="liPwd" class="field ui-block" type="password" placeholder="密码" maxlength="32" autocomplete="current-password" />
-      <button id="liGo" class="btn ui-block" type="button">登 录</button>
-    </div>
-
-    <div class="tabPane hidden" id="paneReg">
-      <input id="rgNick" class="field ui-block" type="text" placeholder="昵称（2~12 字，全服唯一）" maxlength="12" autocomplete="username" />
-      <input id="rgPwd" class="field ui-block" type="password" placeholder="密码（至少 6 位）" maxlength="32" autocomplete="new-password" />
-      <input id="rgPwd2" class="field ui-block" type="password" placeholder="再输一次密码" maxlength="32" autocomplete="new-password" />
-      <button id="rgGo" class="btn ui-block" type="button">注 册</button>
-    </div>
-
+    <div class="acctHint">昵称和最高成绩都存在这台设备上，不用注册也不用密码。<br>填了昵称，成绩才会以这个名字出现在全服排行榜。</div>
+    <input id="nickInput" class="field ui-block" type="text" placeholder="起一个昵称（2~12 字）" maxlength="12" autocomplete="off" />
+    <button id="nickGo" class="btn ui-block" type="button">保 存 昵 称</button>
     <div id="acctMsg"></div>
-    <button id="logoutBtn" class="btn ghost ui-block hidden" type="button">退 出 登 录</button>
+    <button id="nickClear" class="btn ghost ui-block hidden" type="button">清 除 昵 称</button>
   </div>
 </div>
 

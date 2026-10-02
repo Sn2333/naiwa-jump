@@ -1,12 +1,12 @@
 #!/bin/bash
 # 线上验收：拿真实发布域名跑无头浏览器，把结果截下来。
 #
-# 和 shot.sh 的区别：
-#   1) 目标是 https 远程地址，不是 file://，所以查询串可以正常用，
-#      不需要 inject.mjs 那套注入（那套是为了绕开 Edge 对 file:// + ?query 的静默失败）
-#   2) 云端请求要等网络往返，虚拟时间预算给得比本地大
+# 注意：这条路径只适合"看静态画面"。想验证云端请求（昵称上榜、拉全服榜）
+# 或者看控制台报错，一律用 dev/probe.mjs —— --virtual-time-budget 遇到真实
+# 网络请求会提前触发，拍下的可能是脚本还没跑完的空白照。
 #
-# 用法： bash dev/verify_online.sh "<查询串，如 rank 或 reg=昵称:密码>" <outPath> [budget]
+# 用法： bash dev/verify_online.sh "<查询串，如 rank 或 account>" <outPath> [budget]
+# 更推荐：PROBE_Q="nick=测试&rank" node dev/probe.mjs https://jump3d.app.workbuddy.host/ out.png
 PARAMS="$1"; OUT="$2"; BUDGET="${3:-9000}"
 BASE="https://jump3d.app.workbuddy.host/"
 EDGE="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"

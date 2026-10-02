@@ -1,9 +1,13 @@
 """把多文件工程打包成单文件 HTML（可直接双击打开，无需本地服务器）
 
 用法：
-    python dev/build.py                       # 离线版：不接后端，账号/榜单走本地模式
-    python dev/build.py --api <后端地址> --out dist/index.html
-                                             # 在线版：注入 window.__API_BASE
+    python dev/build.py                     # 离线单文件版：不接后端，榜单走本地模式
+    python dev/build.py --out dist/x.html   # 指定输出路径
+
+注意：模块之间靠 __M 命名空间传递符号。这份映射是**自动生成**的 —— 早先
+手工维护过一份注入清单，结果它恰好补上了 game.js 缺失的一个 import，
+把 "ReferenceError: DEFAULT_CHAR is not defined" 一直藏在单文件版里，
+只有部署用的 module 形态才炸。所以现在一律从源码里解析。
 """
 import re
 import pathlib
@@ -21,6 +25,50 @@ def strip_imports(src):
     在非 module 的 <script> 中直接抛 SyntaxError。
     """
     return re.sub(r"^import\b[\s\S]*?;\s*$", "", src, flags=re.M)
+
+
+def exports_of(src):
+    """解析一个模块导出的顶层符号名。
+
+    覆盖 export const/let/var/function/class（含 async function），
+    以及 export { a, b }。
+    """
+    names = []
+    for m in re.finditer(
+        r"^export\s+(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)",
+        src, flags=re.M
+    ):
+        names.append(m.group(1))
+    for m in re.finditer(r"^export\s*\{([^}]*)\}", src, flags=re.M):
+        for part in m.group(1).split(","):
+            part = part.strip()
+            if part:
+                names.append(part.split(" as ")[-1].strip())
+    return names
+
+
+def imports_from(src, module):
+    """找出 `import { a, b } from '<module>';` 里的符号名（支持跨行）"""
+    names = []
+    for m in re.finditer(
+        r"^import\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"];", src, flags=re.M
+    ):
+        if m.group(2).endswith(module):
+            for part in m.group(1).split(","):
+                part = part.strip()
+                if part:
+                    names.append(part.split(" as ")[-1].strip())
+    return names
+
+
+def decls_for(names):
+    """生成 `const X = __M.X;` 形式的解构声明"""
+    return "".join(f"const {n} = __M.{n};\n" for n in names)
+
+
+def expose_for(names):
+    """生成 `__M.X = X;` 形式的导出赋值"""
+    return "".join(f"__M.{n} = {n};\n" for n in names)
 
 
 three_src = (JS / "vendor" / "three.module.js").read_text(encoding="utf-8")
@@ -54,13 +102,18 @@ audio_src = audio_src.replace("export const sound", "const sound")
 hit_src = (JS / "hit.js").read_text(encoding="utf-8")
 hit_src = re.sub(r"^export ", "", hit_src, flags=re.M)
 
-# 账号 / 排行榜的后端适配层。单独一个 IIFE，只往外暴露它自己的那几样
-api_src = (JS / "api.js").read_text(encoding="utf-8")
-api_src = strip_imports(api_src)
+# 昵称 / 排行榜的后端适配层（api.js，单独一个 IIFE）
+api_raw = (JS / "api.js").read_text(encoding="utf-8")
+api_names = exports_of(api_raw)
+api_src = strip_imports(api_raw)
 api_src = re.sub(r"^export ", "", api_src, flags=re.M)
 
-game_src = (JS / "game.js").read_text(encoding="utf-8")
-game_src = strip_imports(game_src)
+game_raw = (JS / "game.js").read_text(encoding="utf-8")
+# game.js 从 api.js 拿了哪些符号，就往下注入哪些 —— 不再手写清单
+game_needs = [n for n in imports_from(game_raw, "api.js") if n in api_names]
+missing_api = set(imports_from(game_raw, "api.js")) - set(api_names)
+assert not missing_api, f"game.js 引用了 api.js 没导出的符号：{sorted(missing_api)}"
+game_src = strip_imports(game_raw)
 
 bundle = (
     three_wrapped
@@ -72,20 +125,19 @@ bundle = (
     + "\n__M.Character3D = Character3D;\n__M.charList = charList;\n__M.charDef = charDef;\n"
     + "__M.bgList = bgList;\n__M.bgDef = bgDef;\n__M.DEFAULT_BG = DEFAULT_BG;\n})(__THREE);\n"
     + "(function(){\n" + audio_src + "\n__M.sound = sound;\n})();\n"
-    + "(function(){\n" + api_src
-    + "\n__M.api = api;\n__M.session = session;\n__M.loadSession = loadSession;\n"
-    + "__M.isLoggedIn = isLoggedIn;\n__M.logout = logout;\n__M.register = register;\n"
-    + "__M.login = login;\n__M.submitScore = submitScore;\n__M.leaderboard = leaderboard;\n})();\n"
+    + "(function(){\n" + api_src + "\n" + expose_for(api_names) + "})();\n"
     + "(function(THREE){\nconst Character3D = __M.Character3D;\nconst sound = __M.sound;\n"
     + "const charList = __M.charList;\nconst DEFAULT_CHAR = __M.DEFAULT_CHAR;\n"
     + "const bgList = __M.bgList;\nconst bgDef = __M.bgDef;\nconst DEFAULT_BG = __M.DEFAULT_BG;\n"
-    + "const api = __M.api;\nconst session = __M.session;\nconst loadSession = __M.loadSession;\n"
-    + "const isLoggedIn = __M.isLoggedIn;\nconst logout = __M.logout;\n"
-    + "const register = __M.register;\nconst login = __M.login;\n"
-    + "const submitScore = __M.submitScore;\nconst leaderboard = __M.leaderboard;\n"
+    + decls_for(game_needs)
     + hit_src + "\n"
     + game_src + "\n})(__THREE);\n"
 )
+
+# 防御：每个被读取的 __M.x 都必须先被赋值过。手写清单的年代就是在这里失守的。
+_used = set(re.findall(r"=\s*__M\.(\w+);", bundle))
+_defined = set(re.findall(r"__M\.(\w+)\s*=", bundle))
+assert not (_used - _defined), f"打包产物缺少注入：{sorted(_used - _defined)}"
 
 out_name = "奶蛙一跳.html"
 argv = sys.argv[1:]
