@@ -99,7 +99,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/health') {
-    return json(res, 200, { ok: true, ts: Date.now(), n: board.size }, origin);
+    /* 字段要和真 Worker 的 handleHealth 对齐：真那边绑了 D1 时返回
+     * { ok:true, db:true, ts }，没绑返回 503 + db:false。
+     * 内存版不存在「没绑库」，所以固定 db:true；多带的 n 是本地的榜容量，
+     * 方便调试时一眼看到有没有数据。 */
+    return json(res, 200, { ok: true, db: true, ts: Date.now(), n: board.size }, origin);
   }
 
   if (url.pathname === '/api/submit') {

@@ -68,6 +68,21 @@ else
 fi
 echo
 
+# 部署自检脚本的回归：造一份「已配好后端地址」的 HTML 让它跑一遍。
+# 它是留着部署那天在「真站点 + 真 Worker」上用的，别等那天才发现它坏了。
+echo "### 部署自检脚本（verify_deploy） ###"
+sed "s|window.__API_BASE = '';|window.__API_BASE = 'http://127.0.0.1:$MOCK_PORT';|" index.html > _vd_tmp.html
+VD_OUT=$("$NODE" dev/verify_deploy.mjs "http://127.0.0.1:$PORT/_vd_tmp.html" --write 2>&1)
+rm -f _vd_tmp.html
+if echo "$VD_OUT" | grep -q "全部通过"; then
+  echo "  ✓ 站点 / 后端地址 / Worker / D1 绑定 / CORS / 预检 / 读榜 / 写榜 全通"
+else
+  echo "  ✗ 部署自检脚本失败："
+  echo "$VD_OUT" | tail -20
+  rc=1
+fi
+echo
+
 echo "### hit regression ###"
 "$NODE" dev/test_hit.mjs || rc=1
 echo

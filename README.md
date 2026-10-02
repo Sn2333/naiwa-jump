@@ -63,6 +63,11 @@ bash dev/shot.sh "bgpanel" /tmp/a.png
 node dev/probe.mjs "https://jump3d.app.workbuddy.host/" /tmp/b.png
 PROBE=rank node dev/probe.mjs "http://127.0.0.1:8899/index.html" /tmp/c.png
 
+# 部署后自检：一条命令验证「站点 → Worker → D1」整条链是否真通
+# （站点里的后端地址、Worker 存活、D1 绑定、CORS 放行、预检、读榜、写榜）
+# 不传 Worker 地址时会从站点 HTML 里自己解析；默认只读，加 --write 才写入
+node dev/verify_deploy.mjs "https://sn2333.github.io/naiwa-jump/" --write
+
 # 从原始立绘重新抠出 30 个角色
 python dev/extract_chars.py
 ```
