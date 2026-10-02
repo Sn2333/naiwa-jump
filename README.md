@@ -25,11 +25,12 @@ index.html          页面骨架 + 全部样式（主题变量集中在 :root �
 js/game.js          主逻辑：状态机、镜头、输入、计分、各类面板
 js/character.js     纸片人角色：单位方片 + mesh.scale，换角色只换贴图
 js/theme.js         背景主题表（25 套，含雾色）
-js/api.js           昵称 + 排行榜适配层（云服务 / 本地双模式）
+js/api.js           昵称 + 排行榜适配层（Worker / 云服务 / 本地 三选一）
 js/hit.js           落点判定（圆砖、方块、八棱柱、弹簧砖、迷你砖、移动砖）
 js/audio.js         WebAudio 音效
 js/sprite_data.js   30 角色的 WebP base64（由 dev/extract_chars.py 生成）
 js/vendor/          three.js r160（本地化，不依赖 CDN）
+worker/             排行榜后端：Cloudflare Worker + D1（含部署说明与离线回归）
 dev/                开发脚本（打包、抠图、无头截图、探针、回归测试）
 ```
 
@@ -43,8 +44,15 @@ dev/                开发脚本（打包、抠图、无头截图、探针、回
 # 打包单文件离线版
 python dev/build.py
 
-# 静态检查 + 打包 + 产物体检 + module 形态实测 + 落点判定回归（一条命令全绿才算过）
+# 静态检查 + 打包 + 产物体检 + module 形态实测 + 排行榜链路 + 落点判定回归
+# （一条命令全绿才算过；含用 node:sqlite 假扮 D1 跑真 SQL 的后端回归）
 bash dev/check.sh
+
+# 只跑后端：把 worker/src/index.js 里真正的 SQL 在本机跑一遍
+node dev/test_worker.mjs
+
+# 起一个内存版后端，页面用 ?api= 指过来就能本地上榜（不用注册任何云服务）
+node dev/mock_worker.mjs
 
 # 无头截图（调试参数走注入，不走 ?query —— Edge 对 file:// 带查询串会静默失败）
 bash dev/shot.sh "bgpanel" /tmp/a.png
@@ -76,25 +84,34 @@ module 形态一加载就 `ReferenceError`，整个游戏白屏。所以「打�
 | `bg=<key>` `bgpanel` | 换背景 / 掀开背景面板 |
 | `account` `nick=<名字>` | 掀开昵称面板 / 直接保存昵称（截图与线上验证用） |
 | `rank` `seedrank=<n>` | 掀开排行榜 / 往本地榜单塞假数据 |
+| `api=<地址>` | 把排行榜后端指到别的地址（本地回归、排查线上问题用） |
 
 ## 后端
 
-线上后端是 WorkBuddy 云服务（腾讯云托管）里的 PostgreSQL，只干一件事：让「最好成绩」
-这张榜是全网的。**没有账号系统** —— 不注册、不登录、不存密码，昵称和最高成绩都存在
-玩家的浏览器里（`localStorage`）。
+后端只干一件事：让「最好成绩」这张榜是全网的。**没有账号系统** —— 不注册、不登录、
+不存密码，昵称和最高成绩都存在玩家的浏览器里（`localStorage`）。
 
-- 一张表 `board`（`nick` 主键 / `best` / `updated_at`）**server-only**：开了 RLS 但一条
-  策略都不建、也不给 `anon` / `authenticated` 授权，客户端连读都读不到；
-- 两个 `SECURITY DEFINER` 函数承担全部校验与写入：
-  - `jump_submit(nick, score)` —— 按昵称 upsert，只保留更高分，返回我的名次
-  - `jump_rank(limit, nick)` —— 全服榜 + 我的名次
-- 昵称的字符集和长度在服务端再校验一遍（不信客户端），分数上限也钳一次。
+主力是 **Cloudflare Worker + D1**（`worker/`），原因见 [`worker/README.md`](worker/README.md)：
+免费档每天 10 万次写、500 万行读，且 `ON CONFLICT ... MAX()` 是一条原子语句 —— 换成
+KV 的话每天只有 1000 次写、还没有事务，两人同时提交会互相覆盖。
+
+- 一张表 `board`（`nick` 主键 / `best` / `updated_at`），建在 `best DESC` 上；
+- `POST /api/submit` 按昵称 upsert，只保留更高分，返回我的名次；
+- `GET /api/rank` 返回全服榜 + 我的名次；
+- 昵称字符集、长度、分数上限在服务端**再校验一遍**（不信客户端），比前端更严；
+- 服务端按 `Origin` 放行，所以前端不需要任何密钥 —— 换域名只是往白名单加一行。
+
+`js/api.js` 按优先级自动选后端，三种形态界面完全一样：
+
+| 形态 | 触发条件 | 榜单范围 |
+|---|---|---|
+| `http` | 配了 `window.__API_BASE`（或网址带 `?api=`） | 全服 |
+| `cloud` | 没配 Worker，但 CloudBase SDK 与配置在 | 全服（回退路径） |
+| `local` | 双击单文件版、离线、断网 | 只统计本机，界面上会明确标出来 |
 
 这个设计有个明确的取舍：**昵称就是身份**。所以同一个人换个浏览器、或者另一个人用了
-同样的昵称，成绩会并到同一行（取更高的那个）。对一个休闲小游戏来说这比「注册登录」划算得多。
-
-没有云配置时（双击单文件版、SDK 没加载出来、离线）自动落到本地模式：昵称和成绩写
-`localStorage`，界面完全一样，只是榜单只统计本机 —— 界面上会明确标出来。
+同样的昵称，成绩会并到同一行（取更高的那个）。对一个休闲小游戏来说，这比「注册登录」
+划算得多。
 
 ## 许可
 

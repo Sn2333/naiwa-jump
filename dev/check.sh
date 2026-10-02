@@ -21,9 +21,12 @@ echo
 # 作用域共享），只有真正的 module 形态才会暴露 —— 而部署上线的正是这一份。
 echo "### module 形态实测（= 线上部署的那份） ###"
 PORT=8899
+MOCK_PORT=8787
 "$PY" -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &
 HTTPD=$!
-trap 'kill $HTTPD 2>/dev/null' EXIT
+"$NODE" dev/mock_worker.mjs "$MOCK_PORT" >/dev/null 2>&1 &
+MOCK=$!
+trap 'kill $HTTPD $MOCK 2>/dev/null' EXIT
 sleep 2
 "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html" "$SHOT_DIR/_check_module.png" 3500 || rc=1
 echo
@@ -38,6 +41,29 @@ if echo "$CLICK_OUT" | grep -q '"ok":true'; then
 else
   echo "  ✗ 点击被遮挡或蓄力失效："
   echo "$CLICK_OUT" | grep -A2 "PROBE_RUN 结果" || echo "$CLICK_OUT" | tail -20
+  rc=1
+fi
+echo
+
+# 排行榜后端回归：用 Node 内置的 node:sqlite 假装成 D1，把 worker/src/index.js
+# 里那段真正的 SQL 跑一遍。Cloudflare 上的错误只在 wrangler tail 里露头，
+# 改一句 SQL 上线试错的代价太大 —— 能本地验的就在这里验掉。
+echo "### worker 后端回归（含 SQL） ###"
+"$NODE" --no-warnings dev/test_worker.mjs || rc=1
+echo
+
+# 排行榜 HTTP 链路实测：昵称 → 上报 → 拉榜 → 看见自己的名次。
+# 后端是 dev/mock_worker.mjs（内存版，接口与真 Worker 一致），
+# 页面用 ?api= 指过去 —— 这样不需要任何云端账号就能全自动跑。
+echo "### 排行榜 HTTP 链路实测 ###"
+RANK_OUT=$(PROBE_RUN="$(cat dev/rank_probe.js)" \
+  "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?api=http://127.0.0.1:$MOCK_PORT" \
+  "$SHOT_DIR/_check_rank.png" 4000 2>&1)
+if echo "$RANK_OUT" | grep -q '"ok":true'; then
+  echo "  ✓ 昵称→上报→榜单全链路（排序与我的名次都正确）"
+else
+  echo "  ✗ 排行榜链路失败："
+  echo "$RANK_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$RANK_OUT" | tail -20
   rc=1
 fi
 echo
