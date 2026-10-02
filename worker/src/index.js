@@ -1,8 +1,14 @@
 /**
  * 奶蛙一跳 · 全服排行榜后端
- * Cloudflare Worker + D1（SQLite）
+ * 核心逻辑（Cloudflare Workers 与 Pages Functions 共用一份）
  *
- * 为什么是 Worker + D1 而不是 KV：
+ * 这份文件同时被两个入口使用：
+ *   - functions/api/[[path]].js  → Cloudflare **Pages** Functions（现在的主力，
+ *     因为 Pages 的 *.pages.dev 在国内可达，而 Workers 的 *.workers.dev 整段打不开）
+ *   - export default { fetch }   → Cloudflare Workers（保留，随时可部署回 Worker）
+ * 两份入口都只是薄壳，业务代码只有这一份，不存在同步问题。
+ *
+ * 为什么是 D1 而不是 KV：
  *   KV 免费档每天只有 1000 次「写」，而且没有事务 —— 两个人同时提交，
  *   后写的会把先写的整个覆盖掉（读-改-写竞态）。排行榜恰好是「高频写同一张表」，
  *   正中 KV 的短处。
@@ -15,8 +21,8 @@
  *   GET  /api/rank?limit=&nick=               全服榜 + 我的名次
  *   GET  /api/health                          存活探针 + 数据库绑定自检
  *
- * 这份文件是自包含的：不 import 任何东西，整份复制粘贴到 Cloudflare 控制台
- * 的 Worker 编辑器里就能跑。
+ * 这份文件除了标准 Web API 不依赖任何东西，可以整份复制粘贴到 Cloudflare
+ * 控制台的编辑器里跑。
  */
 
 /* ------------------------------------------------------------------ */
@@ -81,11 +87,22 @@ function corsHeaders(origin) {
   return { 'access-control-allow-origin': origin, vary: 'Origin' };
 }
 
-function originAllowed(origin) {
+/** 判断请求来源放不放行。self 是这次请求自己的 URL（用来识别同源请求）。
+ *
+ *  三层依次判断：没 Origin（curl / 服务端调用）→ 放行；在域名白名单里 → 放行；
+ *  与请求同域名 → 放行。最后那条是为了 Cloudflare Pages Functions 这种
+ *  「网页和 API 同一个域名」的形态 —— 那时浏览器给出的 Origin 就是自家人，
+ *  不该还要求它先被写进白名单，否则每换一次预览域名都要回来改代码。 */
+function originAllowed(origin, self) {
   /* 没有 Origin 的请求（curl、健康检查、服务端调用）放行；
    * 榜单本来就是公开数据，这里不是安全边界，只是不让别的网站直接拿去用。 */
   if (!origin) return true;
-  return ORIGIN_PATTERNS.some((re) => re.test(origin));
+  if (ORIGIN_PATTERNS.some((re) => re.test(origin))) return true;
+  try {
+    const o = new URL(origin);
+    if (self && o.host === self.host && o.protocol === self.protocol) return true;
+  } catch (e) { /* Origin 不是合法 URL，当外人处理 */ }
+  return false;
 }
 
 function json(obj, status, cors) {
@@ -98,8 +115,8 @@ function json(obj, status, cors) {
   });
 }
 
-function preflight(origin) {
-  if (!originAllowed(origin)) return new Response(null, { status: 403 });
+function preflight(origin, self) {
+  if (!originAllowed(origin, self)) return new Response(null, { status: 403 });
   return new Response(null, {
     status: 204,
     headers: Object.assign(corsHeaders(origin), {
@@ -243,9 +260,9 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin') || '';
 
-    if (request.method === 'OPTIONS') return preflight(origin);
+    if (request.method === 'OPTIONS') return preflight(origin, url);
 
-    if (!originAllowed(origin)) {
+    if (!originAllowed(origin, url)) {
       /* 不加 CORS 头，浏览器会把整条响应挡在 JS 之外 */
       return json({ ok: false, msg: '来源不被允许' }, 403, null);
     }

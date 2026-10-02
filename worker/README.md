@@ -1,8 +1,27 @@
-# 排行榜后端部署（Cloudflare Workers + D1）
+# 静态站 + 排行榜后端部署（Cloudflare Pages）
 
-一个文件、两个接口、零费用。免费套餐**不绑卡**，超额只会报错、不会产生费用。
+一个平台、一个域名、零费用。免费套餐**不绑卡**，超额只会报错、不会产生费用。
 
-## 为什么是 Worker + D1，不是 KV
+## 为什么是 Pages，不是 Workers
+
+一开始用的就是 Workers，部署也确实成功了 —— 但**在国内访问不到**。
+
+`*.workers.dev` 这个域名段被 DNS 污染（解析出来是 Twitter / Facebook 的 IP），
+TCP 443 直连也被挡，浏览器只会显示「无法访问此网站」。反倒是同一家 Cloudflare 的
+Pages（`*.pages.dev`）实测畅通。
+
+两者底层是同一套运行时（Pages Functions 就是 Workers），所以换过来代价极小：
+**后端业务代码一个字没改**，只是多了一层入口。顺带还白赚一条 —— 网页和 API 落在
+同一个域名下，跨域（CORS）整个问题都不存在了，前端也不用填什么后端地址。
+
+| | Workers | Pages |
+|---|---|---|
+| 默认域名 | `*.workers.dev` ❌ 国内打不开 | `*.pages.dev` ✅ 可达 |
+| 能不能跑后端 | 能 | 能（Pages Functions，同一套运行时） |
+| 静态文件和 API | 要两个域名，得配跨域 | **同一个域名，零跨域** |
+| 免费额度 | 10 万次请求 / 天 | 10 万次请求 / 天 + 无限静态请求 |
+
+## 为什么存 D1 而不是 KV
 
 原本想用 KV（键值存储），实际算下来不合适：
 
@@ -24,79 +43,79 @@
 
 | 文件 | 作用 |
 |---|---|
-| `worker/src/index.js` | Worker 本体。自包含，不 import 任何东西，粘到控制台也能跑 |
-| `wrangler.toml` | **在仓库根目录**（不是这一层）。Cloudflare 自动构建默认在根目录执行 `wrangler deploy`，配置放根目录才找得到 |
-| `worker/schema.sql` | 表结构的留档。实际建表由 Worker 自己做，这份用于查字段、手动清库 |
+| `worker/src/index.js` | **业务逻辑真源**。两个入口共用这一份，不存在两份代码要同步 |
+| `functions/api/[[path]].js` | Pages Functions 入口。只有一行桥接，不复制任何业务逻辑 |
+| `wrangler.toml` | Pages 部署配置（在**仓库根目录**）。含 `pages_build_output_dir = "."`，Cloudflare 读了就不用你手填构建设置 |
+| `worker/schema.sql` | 表结构留档。实际建表由后端自己做，这份用于查字段、手动清库 |
+
+`worker/src/index.js` 同时导出 `export default { fetch }`，所以**随时可以部署回 Worker**
+（比如以后有了自己的域名，想换个入口）。
 
 ---
 
-## 路线 A：连接 GitHub 仓库自动构建（推荐，push 即部署）
+## 部署步骤
 
-1. **建库**：左侧 **Storage & Databases → D1 SQL database → Create**，名字 `naiwa-board`。
-   建好后进详情页，把 **Database ID** 复制出来（一串 `8-4-4-4-12` 的十六进制）。
+### 第 1 步：建 D1 数据库
 
-2. **把这行填进仓库根目录的 `wrangler.toml`**，取消注释：
+左侧 **Storage & Databases → D1 → Create database**，名字填 `naiwa-board`。
 
-   ```toml
-   [[d1_databases]]
-   binding = "DB"
-   database_name = "naiwa-board"
-   database_id = "刚才复制的 Database ID"
-   ```
+表结构**不用管** —— 后端第一次收到请求时会自己建（`ensureSchema`）。
 
-3. **连仓库**：**Workers & Pages → Create → Import a repository** → 选 GitHub 账号 →
-   选 `naiwa-jump` → 保存并部署。
+### 第 2 步：建 Pages 项目并连接仓库
 
-4. **构建设置全部保持默认**：
+**Workers & Pages → Create → Pages → Connect to Git** → 选 `Sn2333/naiwa-jump`
 
-   | 设置项 | 填什么 |
-   |---|---|
-   | 构建命令 | 留空 |
-   | 部署命令 | `npx wrangler deploy`（默认值） |
-   | 根目录 | **留空** |
+| 设置项 | 填什么 |
+|---|---|
+| 项目名 | `naiwa-jump`（决定最终域名 `naiwa-jump.pages.dev`） |
+| 生产分支 | `main` |
+| 框架预设 | None |
+| 构建命令 | **留空**（这里没有构建步骤，文件直接发） |
+| 输出目录 | `/`（`wrangler.toml` 里已经写了 `.`，通常会自动填好） |
 
-5. **Worker 名字必须对得上**。控制台里这个 Worker 的名字要和 `wrangler.toml` 里的
-   `name = "naiwa-jump-api"` 一字不差，否则构建直接失败并报
-   `The name in your Wrangler configuration file must match the name of your Worker`。
-   建项目时名字就填 `naiwa-jump-api` 最省事。
+保存后它立刻开始构建，几十秒出结果。
 
-6. **验证**：浏览器打开
-   `https://naiwa-jump-api.<你的子域>.workers.dev/api/health`
+> ⚠️ 项目名撞车了（之前建过一个叫 `naiwa-jump` 的 Worker）就换一个名字，
+> 然后把域名同步进 `index.html` 里那段注释。
 
----
+### 第 3 步：绑定 D1
 
-## 路线 B：不连仓库，浏览器里手点（约 5 分钟）
+这个 Pages 项目 → **Settings → Bindings → Add → D1 database**
 
-1. 建库同上（`naiwa-board`）。
-2. **Workers & Pages → Create → Workers → Create Worker**，名字填 `naiwa-jump-api`，Deploy。
-3. 点 **Edit code**，把示例代码全选删掉，粘进 `worker/src/index.js` 全文，Deploy。
-4. 进这个 Worker 的 **Settings → Bindings → Add binding → D1 database**：
-   - Variable name：`DB`（**必须一字不差**，代码里用的是 `env.DB`）
-   - D1 database：`naiwa-board`
-5. 保存后再 Deploy 一次。
+- **Variable name 必须填 `DB`**（代码里用的是 `env.DB`，一字不差）
+- Database 选 `naiwa-board`
 
-> 这条路线下绑定来自控制台。**路线 A 下以 `wrangler.toml` 为准** —— 构建时配置文件是
-> 权威来源，所以在仓库里跑自动构建时，绑定请写进 `wrangler.toml`。
+存好后要**重新部署一次**才生效：**Deployments → 最新那条 → Retry deployment**。
+
+### 第 4 步：验证
+
+浏览器打开：
+
+```
+https://naiwa-jump.pages.dev/api/health
+```
+
+看到 `{"ok":true,"db":true,"ts":...}` 就全通了。
 
 ---
 
 ## 卡住了就看 `/api/health`
 
-部署完第一次排查时，「Worker 没起来」和「Worker 起来了但没绑数据库」在浏览器里
-长得一模一样。所以健康检查故意多做了一件事，把这两种情况分开报：
+部署完第一次排查时，「后端没起来」和「起来了但没绑数据库」在浏览器里长得一模一样。
+所以健康检查故意多做了一件事，把这两种情况分开报：
 
 | 返回 | 含义 | 怎么办 |
 |---|---|---|
 | `200 {"ok":true,"db":true,...}` | 全通了 | 继续 |
-| `503 {"ok":false,"db":false,"msg":"...没有绑定 D1..."}` | Worker 正常，缺 Bindings | 按上面的步骤 4 加绑定 |
-| `503 {"ok":false,"db":false,"msg":"D1 绑上了，但建表失败：..."}` | 绑定了但库不对 | 看 msg 里 D1 的原始报错 |
-| 502 / 页面打不开 / 构建日志报错 | Worker 没部署上去 | 看 **Deployments → View build history** |
+| `503 {"ok":false,"db":false,"msg":"...没有绑定 D1..."}` | 后端正常，缺绑定 | 回到第 3 步 |
+| `503 {"ok":false,"db":false,"msg":"D1 绑上了，但建表失败：..."}` | 绑了但库不对 | 看 msg 里的原始报错 |
+| 404 / 页面打不开 | 项目没部署上 | 看 **Deployments** 里的构建日志 |
 
-构建失败的三种典型报错：
+一条命令全查一遍（含站点、CORS、写入回读）：
 
-- `Missing entry-point: ...` —— 根目录没找到 `wrangler.toml`，把「根目录」留空
-- `The name in your Wrangler configuration file must match ...` —— Worker 名字对不上
-- `Could not route to /client/v4/accounts//workers/services/` —— 配置里多了 `account_id`，删掉
+```bash
+node dev/verify_deploy.mjs https://naiwa-jump.pages.dev --write
+```
 
 ---
 
@@ -106,8 +125,7 @@
 
 ```bash
 npx wrangler login
-npx wrangler d1 create naiwa-board     # 把输出的 database_id 填进 wrangler.toml
-npx wrangler deploy                    # 首次会自动建表
+npx wrangler pages deploy . --project-name=naiwa-jump
 ```
 
 ---
@@ -126,30 +144,34 @@ npx wrangler deploy                    # 首次会自动建表
 - 只允许中英文、数字、下划线、短横线
 - 分数 0 ~ 1,000,000，越大越可疑，超出直接拒
 
-## 来源白名单
+## 来源放行
 
-`worker/src/index.js` 顶部的 `ORIGIN_PATTERNS` 决定哪些网站可以调用这个后端。现在放行：
+`worker/src/index.js` 顶部有 `ORIGIN_PATTERNS` 白名单，但**部署在 Pages 上时基本用不到** ——
+网页和 API 同域，走的是「与请求同域名 → 放行」那条规则，域名是平台分配的、
+不用维护。现在白名单里放行的是：
 
 ```
-https://sn2333.github.io                  ← GitHub Pages
+https://sn2333.github.io                  ← GitHub Pages（如果也部署一份）
 https://jump3d.app.workbuddy.host         ← 原来的域名
 http://localhost:* / http://127.0.0.1:*   ← 本地开发
 ```
 
-**给 GitHub Pages 配了自定义域名、或者换了部署域名，记得往这个数组里加一行**
-（Origin 不带路径、不带结尾斜杠），加完重新 Deploy。没加的话浏览器会直接报 CORS。
+**只有当网页和后端不在同一个域名下**（比如网页放 github.io、后端放 pages.dev），
+才需要把网页的 Origin 加进这个数组（不带路径、不带结尾斜杠），加完重新部署。
+没加的话浏览器会直接报 CORS。
 
 ## 免费额度够不够用
 
 | 项目 | 免费额度 | 换算到本游戏 |
 |---|---|---|
-| Worker 请求 | 100,000 次 / 天 | 每次提交或拉榜算一次 |
+| Pages 请求（Functions） | 100,000 次 / 天 | 每次提交或拉榜算一次 |
+| Pages 静态请求 | 不限 | 网页、JS、角色图都走这条 |
 | D1 行写入 | 100,000 行 / 天 | 每次提交写 1 行 |
 | D1 行读取 | 5,000,000 行 / 天 | 拉榜扫的行数（有索引，约等于榜的长度） |
 | D1 存储 | 5 GB | 一个昵称几十字节 |
 
-也就是**每天 10 万次提交、拉榜基本不设限**，比腾讯云那份免费额度的量级大得多。
-额度按天重置（UTC 零点），用完接口报错、不会产生费用。
+也就是**每天 10 万次提交、拉榜基本不设限**。额度按天重置（UTC 零点），
+用完接口报错、不会产生费用。
 
 ## 运维小抄
 
@@ -171,8 +193,8 @@ DELETE FROM board;
 不用部署也能把整条链路跑通：
 
 ```bash
-node dev/mock_worker.mjs                 # 内存版后端，接口与真 Worker 一致
-node dev/test_worker.mjs                 # 用 node:sqlite 假装成 D1，把真 SQL 跑一遍
+node dev/mock_worker.mjs    # 内存版后端，接口与线上那份一致
+node dev/test_worker.mjs    # 用 node:sqlite 假装成 D1，把真 SQL 跑一遍（含 Pages 入口桥接）
 ```
 
 然后浏览器打开 `index.html?api=http://127.0.0.1:8787` 就能本地上榜。

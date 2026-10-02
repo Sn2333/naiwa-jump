@@ -25,14 +25,14 @@ index.html          页面骨架 + 全部样式（主题变量集中在 :root �
 js/game.js          主逻辑：状态机、镜头、输入、计分、各类面板
 js/character.js     纸片人角色：单位方片 + mesh.scale，换角色只换贴图
 js/theme.js         背景主题表（25 套，含雾色）
-js/api.js           昵称 + 排行榜适配层（Worker / 云服务 / 本地 三选一）
+js/api.js           昵称 + 排行榜适配层（同域 / 跨域 / 云服务 / 本地，按优先级自动选）
 js/hit.js           落点判定（圆砖、方块、八棱柱、弹簧砖、迷你砖、移动砖）
 js/audio.js         WebAudio 音效
 js/sprite_data.js   30 角色的 WebP base64（由 dev/extract_chars.py 生成）
 js/vendor/          three.js r160（本地化，不依赖 CDN）
-worker/             排行榜后端源码 + D1 表结构留档（部署说明见 worker/README.md）
-wrangler.toml       Worker 部署配置。**在仓库根目录**是必须的：Cloudflare 自动构建
-                    默认在根目录跑 `wrangler deploy`，放子目录会报 Missing entry-point
+functions/api/      Cloudflare Pages Functions 入口（/api/* 桥接到 worker/src/index.js）
+worker/             排行榜后端真源 + D1 表结构留档（部署说明见 worker/README.md）
+wrangler.toml       Cloudflare Pages 部署配置（pages_build_output_dir = "."）
 dev/                开发脚本（打包、抠图、无头截图、探针、回归测试）
 ```
 
@@ -98,29 +98,37 @@ module 形态一加载就 `ReferenceError`，整个游戏白屏。所以「打�
 后端只干一件事：让「最好成绩」这张榜是全网的。**没有账号系统** —— 不注册、不登录、
 不存密码，昵称和最高成绩都存在玩家的浏览器里（`localStorage`）。
 
-主力是 **Cloudflare Worker + D1**（`worker/`），原因见 [`worker/README.md`](worker/README.md)：
-免费档每天 10 万次写、500 万行读，且 `ON CONFLICT ... MAX()` 是一条原子语句 —— 换成
-KV 的话每天只有 1000 次写、还没有事务，两人同时提交会互相覆盖。
+跑在 **Cloudflare Pages** 上：静态文件和 Pages Functions 同一个域名，前端不需要
+知道后端地址，也没有跨域这回事。
 
-- 一张表 `board`（`nick` 主键 / `best` / `updated_at`），建在 `best DESC` 上；
+- 业务逻辑真源是 `worker/src/index.js`，两个入口共用同一份，不存在「两份代码要同步」：
+  - `functions/api/[[path]].js` —— Pages Functions，**现在的主力**
+  - `export default { fetch }` —— Worker 形态，保留着，随时可以部署回去
+- 存储用 **D1（SQLite）**：免费档每天 100,000 行写 / 5,000,000 行读，而且
+  `INSERT ... ON CONFLICT DO UPDATE SET best = MAX(...)` 是一条**原子**语句。
+  换成 KV 的话每天只有 1,000 次写、还没有事务，两个人同时提交会互相覆盖。
+- 一张表 `board`（`nick` 主键 / `best` / `updated_at`），索引建在 `best DESC` 上；
 - `POST /api/submit` 按昵称 upsert，只保留更高分，返回我的名次；
 - `GET /api/rank` 返回全服榜 + 我的名次；
-- `GET /api/health` 除了报存活，还会报**数据库有没有绑上** —— 「Worker 没起来」和
+- `GET /api/health` 除了报存活，还会报**数据库有没有绑上** —— 「后端没起来」和
   「起来了但没绑 D1」在浏览器里长得一样，这个接口把两种状态分开报（503 + 原因）；
 - 昵称字符集、长度、分数上限在服务端**再校验一遍**（不信客户端），比前端更严；
-- 服务端按 `Origin` 放行，所以前端不需要任何密钥 —— 换域名只是往白名单加一行。
+- 来源放行三条规则：没有 Origin（curl / 服务端调用）→ 放行；在域名白名单里 → 放行；
+  与请求同域名 → 放行。最后一条是专门为 Pages 这种「网页和 API 同域」的形态准备的。
 
-部署走 GitHub 自动构建：**构建设置全部保持默认**（部署命令 `npx wrangler deploy`、
-根目录留空），只要 Worker 名字和根目录 `wrangler.toml` 里的 `name` 一致就行。
-绑定写在 `wrangler.toml` 里（构建时配置文件是权威来源），没有 id 时那一段保持注释，
-部署照样成功。
+**为什么不是 Workers**：一开始用的就是 Workers，部署也确实成功了，但 `*.workers.dev`
+在国内整段打不开（DNS 被解析成假 IP，TLS 握手也被挡），玩家根本访问不到。
+而同一家 Cloudflare 的 `*.pages.dev` 实测畅通。两者底层是同一套运行时，
+所以换过来只是多了一层入口，业务代码一个字没改。
+
+部署步骤见 [`worker/README.md`](worker/README.md)。
 
 `js/api.js` 按优先级自动选后端，三种形态界面完全一样：
 
 | 形态 | 触发条件 | 榜单范围 |
 |---|---|---|
-| `http` | 配了 `window.__API_BASE`（或网址带 `?api=`） | 全服 |
-| `cloud` | 没配 Worker，但 CloudBase SDK 与配置在 | 全服（回退路径） |
+| `http` | `__API_BASE` 是 `'same'`（同域）或一个 http(s) 地址（跨域） | 全服 |
+| `cloud` | 没配自家后端，但 CloudBase SDK 与配置在 | 全服（回退路径） |
 | `local` | 双击单文件版、离线、断网 | 只统计本机，界面上会明确标出来 |
 
 这个设计有个明确的取舍：**昵称就是身份**。所以同一个人换个浏览器、或者另一个人用了

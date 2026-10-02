@@ -110,6 +110,18 @@ console.log('### 存活 / CORS ###');
 
   const { res: r6 } = await call('OPTIONS', '/api/submit', { origin: 'https://evil.example.com' });
   check('陌生来源的预检被拒', r6.status === 403, r6.status);
+
+  /* 同源请求必须放行。Cloudflare Pages 的形态就是「网页和 API 落在同一个域名下」，
+   * 那时浏览器给出的 Origin 就是自己，而域名（xxx.pages.dev）是平台分配的、
+   * 不可能预先写进白名单 —— 只能靠「和请求同域名」这条规则接住，否则
+   * 同域部署反而会被自己拒掉。 */
+  const { res: r7 } = await call('GET', '/api/health', { origin: 'https://api.example.com' });
+  check('同域来源不进白名单也放行',
+    r7.status === 200 && r7.headers.get('access-control-allow-origin') === 'https://api.example.com',
+    { s: r7.status, a: r7.headers.get('access-control-allow-origin') });
+
+  const { res: r8 } = await call('GET', '/api/health', { origin: 'http://api.example.com' });
+  check('同域名但协议不同不放行（防 http 冒充 https）', r8.status === 403, r8.status);
 }
 
 console.log('\n### 提交成绩 ###');
@@ -216,6 +228,43 @@ console.log('\n### 没绑 D1 时的报错要能看懂 ###');
     origin: GH, body: { nick: '奶蛙', score: 1 },
   }), bare);
   check('提交同样返回 503 而不是 500', r3.status === 503, r3.status);
+}
+
+/* Pages Functions 入口那层壳看着没什么内容，但恰恰是最容易出「本地完全看不出来」
+ * 问题的地方：env 忘了往下传、request 传错，都会让线上 /api/* 全部 404，
+ * 而本地跑 worker 模块本身一切正常。所以这里把入口也真跑一遍。 */
+console.log('\n### Pages Functions 入口桥接 ###');
+{
+  const { onRequest } = await import('../functions/api/[[path]].js');
+  check('入口导出了 onRequest', typeof onRequest === 'function', typeof onRequest);
+
+  if (typeof onRequest === 'function') {
+    /* Pages 上请求 URL 就是自己的域名，Origin 也是同一个 —— 走同域那条规则 */
+    const pagesReq = (path, origin) =>
+      new Request('https://naiwa-jump.pages.dev' + path, {
+        headers: origin ? { origin } : {},
+      });
+
+    const r1 = await onRequest({ request: pagesReq('/api/health', ''), env });
+    const d1 = await r1.json();
+    check('经 Pages 入口访问 /api/health 正常',
+      r1.status === 200 && d1.ok === true && d1.db === true, { s: r1.status, d: d1 });
+
+    const r2 = await onRequest({
+      request: pagesReq('/api/health', 'https://naiwa-jump.pages.dev'), env,
+    });
+    check('同域（Pages 自己的域名）请求被放行', r2.status === 200, r2.status);
+
+    const r3 = await onRequest({ request: pagesReq('/api/rank?limit=5', ''), env });
+    const d3 = await r3.json();
+    check('经 Pages 入口能读榜单',
+      r3.status === 200 && Array.isArray(d3.list), { s: r3.status, d: d3 });
+
+    /* 入口漏传 env 的后果 = 线上所有接口 503，这里把它固定住 */
+    const r4 = await onRequest({ request: pagesReq('/api/health', ''), env: {} });
+    check('入口把 env 透传下去了（没绑库时应当报 503 而不是崩）',
+      r4.status === 503, r4.status);
+  }
 }
 
 /* ------------------------------------------------------------------ */

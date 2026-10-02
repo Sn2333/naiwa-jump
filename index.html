@@ -459,23 +459,27 @@ if (location.search.indexOf('dbg') >= 0) {
 <!-- cloud:begin —— 这一段只在"在线版"（部署到官网/GitHub Pages 的那个 index.html）里需要，
      dev/build.py 打单文件离线版时会把整段删掉，让双击打开时零网络请求、纯本地模式 -->
 <script>
-/* 排行榜后端（Cloudflare Worker）地址。
+/* 排行榜后端地址。
 
-   部署完 worker/src/index.js 之后，把控制台给的地址填进来，形如
-   https://naiwa-jump-api.xxxx.workers.dev （结尾不带斜杠）。
+   现在填的是 'same' —— 同域模式：网页和后端部署在同一个域名下面
+   （Cloudflare Pages 托管静态文件，Pages Functions 提供 /api/*）。
+   前端不需要知道后端在哪，请求直接打同域的 /api/xxx。
 
-   ★ 现在是空的，所以线上那份仍然走下面的 CloudBase 回退，功能不受影响。
-     填上之后就自动切到 Worker —— GitHub Pages 和 workbuddy 域名共用这一个后端，
-     换域名只要往 Worker 的来源白名单里加一行，前端不用动。
+   ★ 为什么不用 Cloudflare Workers：Workers 的默认域名 *.workers.dev 在国内
+     整段打不开（DNS 被解析成假 IP，TLS 握手也被挡），而同一家的 Pages
+     （*.pages.dev）实测可达。两者底层是同一套运行时，后端代码一个字没改。
 
+   别的取值：
+     ''             不填 —— 退回下面的 CloudBase，或者本地模式
+     'https://xxx'  跨域模式 —— 指到独立部署的后端（例如 Worker 直连）
    也可以在网址后面加 ?api=<地址> 临时覆盖，用来把线上那份指到本地测试后端。 */
-window.__API_BASE = '';
+window.__API_BASE = 'same';
 
 /* CloudBase 回退：两个值来自开通腾讯云云服务时返回的 publicConfig。
    publishableKey 只标识"是哪个应用"，本身不含权限 —— 服务端按来源域名放行，
    所以放在前端是设计如此；真正的身份校验在服务端的数据库函数里。
 
-   只有没配 Worker 地址时才去拉这个 SDK。已经切到 Worker 还把它拉下来，
+   只有没配后端地址时才去拉这个 SDK。已经有自家后端还把它拉下来，
    等于让每个玩家白多下一个几百 KB 的脚本。 */
 window.__CLOUD_CONFIG = {
   endpoint: 'https://jump3d.app.workbuddy.host',

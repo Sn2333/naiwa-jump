@@ -1,40 +1,58 @@
-# 奶蛙一跳 · 排行榜后端（Cloudflare Worker + D1）
+# 奶蛙一跳 · 静态站 + 排行榜后端（Cloudflare Pages）
 #
-# 为什么这份配置放在「仓库根目录」而不是 worker/ 里：
-#   Cloudflare 用 GitHub 仓库自动构建时，默认在仓库根目录执行 `npx wrangler deploy`。
-#   根目录找不到配置文件就会直接报
-#     ✘ [ERROR] Missing entry-point: The entry-point should be specified via ...
-#   放在这里之后，构建设置一项都不用改，push 一下就部署。
+# ───────────────────────────────────────────────────────────────────
+# 为什么是 Pages，不是 Workers
 #
-# 两种部署方式：
-#   ① 仓库自动构建（推荐）
-#      Workers & Pages → Create → 连接这个仓库 → 保存并部署。
-#      构建设置全部保持默认：构建命令留空、部署命令 `npx wrangler deploy`、根目录留空。
-#      ⚠️ 控制台里这个 Worker 的名字必须和下面的 name 一模一样，否则构建会报
-#         "The name in your Wrangler configuration file must match the name of your Worker"。
-#   ② 本地命令行：在仓库根目录执行
-#      npx wrangler login && npx wrangler deploy
+# 一开始用的是 Workers。部署确实成功了，但它的默认域名 *.workers.dev 在国内
+# 整段打不开 —— DNS 被解析成假 IP（Twitter / Facebook 的地址段），TCP 层也被
+# 挡，浏览器只会显示「无法访问此网站」。反倒是同一家 Cloudflare 的 Pages
+# （*.pages.dev）实测畅通。
+#
+# 两者底层是同一套运行时（Pages Functions 就是 Workers），所以换过来代价极小：
+# 后端业务代码一份没改，只是多了 functions/ 这一层入口。顺带还白赚一条 ——
+# 网页和 API 落在同一个域名下，跨域（CORS）整个问题都不存在了。
+# ───────────────────────────────────────────────────────────────────
+#
+# 怎么用这份配置
+#
+# Cloudflare 控制台 → Workers & Pages → Create → Pages → Connect to Git
+#   · 选仓库   Sn2333/naiwa-jump
+#   · 项目名   保持 naiwa-jump（决定最终域名 naiwa-jump.pages.dev）
+#   · 生产分支 main
+#   · 构建配置 不用填 —— 下面的 pages_build_output_dir 会被自动读取
+# 保存后它自己就开始构建，几十秒出结果。
+#
+# ⚠️ 如果项目名撞车（之前建过一个叫 naiwa-jump 的 Worker），换一个名字即可，
+#    然后把新域名同步进 index.html 里那段注释。
+#
+# ⚠️ 之前那个 Worker 项目已经没用了，建议删掉 —— 否则它每次构建都会失败，
+#    然后给你发一封没用的失败通知邮件。
+# ───────────────────────────────────────────────────────────────────
 
-name = "naiwa-jump-api"
-main = "worker/src/index.js"
+name = "naiwa-jump"
 compatibility_date = "2026-09-01"
 
-# 打开后可以在控制台的 Worker → Logs 里看到请求日志和异常，排查时很有用
-[observability]
-enabled = true
+# 静态资源目录。`.` = 仓库根目录：index.html、js/、assets/ 都在这一层，
+# 所以一个文件都不用挪。
+# functions/ 是 Cloudflare 的约定目录，会被当成 Pages Functions 处理
+# （见 functions/api/[[path]].js），不会作为静态文件发布出去。
+#
+# 万一控制台没自动读到这行，就在构建设置里手动填：Build output directory = /
+pages_build_output_dir = "."
 
-# ---------------------------------------------------------------------------
-# D1 绑定
+# ───────────────────────────────────────────────────────────────────
+# D1 数据库绑定
 #
-# database_id 在 Cloudflare → Storage & Databases → D1 → naiwa-board 的详情页上，
-# 是一串 8-4-4-4-12 的十六进制。**变量名必须是 DB**，代码里用的是 env.DB。
+# Pages 的绑定**在控制台里配**，不写在这里：
+#   这个 Pages 项目 → Settings → Functions → D1 database bindings
+#   → Add binding：变量名必须填 DB（代码里用的是 env.DB），库选 naiwa-board。
+#   加完要重新部署一次才会生效（Deployments → 最新那条 → Retry deployment）。
 #
-# 故意先注释掉：还没建库或者还没拿到 id 的时候，保持注释也能部署成功 ——
-# Worker 会正常起来，只是 /api/health 返回 503 并写清楚「没有绑定 D1」。
-# 这样构建不会因为一个占位字符串而失败，卡在哪一步一眼就能看出来。
-# 拿到 id 后把下面三行取消注释、填上 id，push 一下就自动部署。
-# ---------------------------------------------------------------------------
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "naiwa-board"
-# database_id = "填 naiwa-board 的 Database ID"
+# naiwa-board 还没建的话：
+#   Storage & Databases → D1 → Create database，名字填 naiwa-board。
+#   表结构不用管 —— 后端第一次收到请求时会自己建（worker/src/index.js 里的
+#   ensureSchema），worker/schema.sql 只是同一份结构的留档。
+#
+# 绑定好之后，一条命令就能验通没通：
+#   node dev/verify_deploy.mjs https://naiwa-jump.pages.dev --write
+# ───────────────────────────────────────────────────────────────────

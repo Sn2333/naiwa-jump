@@ -70,8 +70,13 @@ echo
 
 # 部署自检脚本的回归：造一份「已配好后端地址」的 HTML 让它跑一遍。
 # 它是留着部署那天在「真站点 + 真 Worker」上用的，别等那天才发现它坏了。
+# 替换用「任意取值」的正则 —— 写死成某一个值的话，index.html 一改这里就静默失配。
 echo "### 部署自检脚本（verify_deploy） ###"
-sed "s|window.__API_BASE = '';|window.__API_BASE = 'http://127.0.0.1:$MOCK_PORT';|" index.html > _vd_tmp.html
+sed -E "s|window\.__API_BASE = '[^']*';|window.__API_BASE = 'http://127.0.0.1:$MOCK_PORT';|" index.html > _vd_tmp.html
+if ! grep -q "__API_BASE = 'http://127.0.0.1:$MOCK_PORT'" _vd_tmp.html; then
+  echo "  ✗ 注入后端地址失败（index.html 里的 __API_BASE 写法变了？）"
+  rc=1
+fi
 VD_OUT=$("$NODE" dev/verify_deploy.mjs "http://127.0.0.1:$PORT/_vd_tmp.html" --write 2>&1)
 rm -f _vd_tmp.html
 if echo "$VD_OUT" | grep -q "全部通过"; then

@@ -6,11 +6,14 @@
  *
  * 三种运行形态，按优先级自动选一个：
  *
- *   1. http   走 Cloudflare Worker（worker/src/index.js）。这是主力形态：
- *             GitHub Pages 和 workbuddy 域名都指向同一个 Worker，换域名
- *             只是往 Worker 的来源白名单里加一行，前端什么都不用改。
- *   2. cloud  走腾讯云 CloudBase。留作回退 —— Worker 挂了、或者没配
- *             __API_BASE 时，部署在 workbuddy 域名上的那份还能照常上榜。
+ *   1. http   走自家排行榜后端（worker/src/index.js，由 Cloudflare 托管）。
+ *             两个子形态，由 __API_BASE 的取值决定：
+ *               'same'        同域模式 —— 网页和 API 在同一个域名下
+ *                             （Cloudflare Pages Functions），请求直接打 /api/xxx，
+ *                             不用填任何地址，也就没有「地址填错」这个失败点。
+ *               'https://xxx' 跨域模式 —— 指到独立部署的后端（Worker 直连等）。
+ *   2. cloud  走腾讯云 CloudBase。留作回退 —— 没配 __API_BASE 时，部署在
+ *             workbuddy 域名上的那份还能照常上榜。
  *   3. local  前两个都没有（双击单文件版、离线、断网）：榜单只统计本机，
  *             界面上会明确标出来，不让人误以为成绩真的上传了。
  */
@@ -50,7 +53,16 @@ function resolveHttpBase() {
   return String(base).trim().replace(/\/+$/, '');   // 尾巴上的斜杠统一去掉，拼路径时才不会出现 //
 }
 
-const HTTP_BASE = resolveHttpBase();
+/** 后端地址。三种取值：
+ *    ''            没配 —— 走 CloudBase 或本地模式
+ *    'same'        同域模式 —— 网页和 API 同一个域名，请求直接打 /api/xxx
+ *    'https://...' 跨域模式 —— 指到独立部署的后端 */
+const RAW_BASE = resolveHttpBase();
+const SAME_ORIGIN = RAW_BASE === 'same';
+const HTTP_BASE = SAME_ORIGIN ? '' : RAW_BASE;
+/* 「走不走自家后端」必须和「地址前缀是不是空串」分开判断：同域模式下前缀
+ * 恰好就是空串，如果拿前缀当开关，会误判成「没有后端」而掉进本地模式。 */
+const HTTP_MODE = SAME_ORIGIN || !!RAW_BASE;
 
 /* ------------------------------------------------------------------ */
 /* 云服务客户端（回退路径）                                            */
@@ -65,7 +77,7 @@ let cloudTried = false;
 function ensureCloud() {
   if (cloudTried) return cloudClient;
   cloudTried = true;
-  if (IS_FILE || HTTP_BASE) return null;   // 已经有 Worker 了，不用再问 CloudBase
+  if (IS_FILE || HTTP_MODE) return null;   // 已经有自家后端了，不用再问 CloudBase
   const WBC = typeof window !== 'undefined' ? window.WorkBuddyCloud : null;
   const cfg = (typeof window !== 'undefined' && window.__CLOUD_CONFIG) || null;
   if (!WBC || !WBC.createWorkBuddyCloud || !cfg || !cfg.endpoint || !cfg.publishableKey) {
@@ -85,9 +97,9 @@ function ensureCloud() {
 /** 后端基地址。空串 = 本地模式（保留这个名字，界面上用它判断提示语） */
 export const api = {
   base: HTTP_BASE,
-  get online() { return !!HTTP_BASE || !!ensureCloud(); },
+  get online() { return HTTP_MODE || !!ensureCloud(); },
   get mode() {
-    if (HTTP_BASE) return 'http';
+    if (HTTP_MODE) return 'http';
     return ensureCloud() ? 'cloud' : 'local';
   },
 };
@@ -248,7 +260,7 @@ export async function submitScore(score) {
     return { best: all[nick], rank: null, nick, local: true };
   }
 
-  if (HTTP_BASE) {
+  if (HTTP_MODE) {
     const r = await httpJSON('POST', '/api/submit', { nick, score: s });
     return { best: r.best, rank: r.rank, nick: r.nick || nick, local: false };
   }
@@ -277,7 +289,7 @@ export async function leaderboard(limit = 100) {
     return { list, me: me ? { rank: me.rank, best: me.best } : null, local: true };
   }
 
-  if (HTTP_BASE) {
+  if (HTTP_MODE) {
     const q = `/api/rank?limit=${n}` + (nick ? `&nick=${encodeURIComponent(nick)}` : '');
     const r = await httpJSON('GET', q);
     const list = (r.list || []).map((e) => ({
