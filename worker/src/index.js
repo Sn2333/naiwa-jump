@@ -13,7 +13,7 @@
  * 对外只有三个接口（和前端 js/api.js 里的 httpJSON 一一对应）：
  *   POST /api/submit   { nick, score }        按昵称 upsert 更高成绩，返回我的名次
  *   GET  /api/rank?limit=&nick=               全服榜 + 我的名次
- *   GET  /api/health                          存活探针
+ *   GET  /api/health                          存活探针 + 数据库绑定自检
  *
  * 这份文件是自包含的：不 import 任何东西，整份复制粘贴到 Cloudflare 控制台
  * 的 Worker 编辑器里就能跑。
@@ -133,6 +133,35 @@ async function rankOf(env, nick) {
 /* 接口实现                                                            */
 /* ------------------------------------------------------------------ */
 
+/* 存活探针。故意多做一件事：顺带报一次数据库绑定状态。
+ *
+ * 部署完第一次排查的时候，「Worker 没起来」和「Worker 起来了但没绑 D1」
+ * 在浏览器里长得一模一样（都是 500 / 页面打不开），能卡人很久。
+ * 这里把两种情况分成不同的状态码和文案：
+ *   200 {ok:true,  db:true }              —— 全通了
+ *   503 {ok:false, db:false, msg:"..."}   —— 起来了，但缺东西，msg 说清缺什么 */
+async function handleHealth(env, cors) {
+  if (!env || !env.DB) {
+    return json({
+      ok: false,
+      db: false,
+      msg: 'Worker 正常，但没有绑定 D1 数据库：'
+        + '进入这个 Worker 的 Settings → Bindings → Add binding → D1 database，'
+        + '变量名填 DB、选择 naiwa-board，保存后再 Deploy 一次。',
+    }, 503, cors);
+  }
+  try {
+    await ensureSchema(env);
+  } catch (e) {
+    return json({
+      ok: false,
+      db: false,
+      msg: 'D1 绑上了，但建表失败：' + (e && e.message ? e.message : String(e)),
+    }, 503, cors);
+  }
+  return json({ ok: true, db: true, ts: Date.now() }, 200, cors);
+}
+
 async function handleSubmit(request, env, cors) {
   let body = null;
   try {
@@ -223,11 +252,20 @@ export default {
     const cors = corsHeaders(origin);
 
     try {
+      if (url.pathname === '/api/health') {
+        return await handleHealth(env, cors);
+      }
+
+      /* 建表只放在真要读写的两个接口前 —— 健康检查要能在「没绑库」时也答得出来，
+       * 所以不能让它先撞上建表这步。 */
+      if (!env || !env.DB) {
+        return json({
+          ok: false,
+          msg: '后端还没绑数据库（Worker → Settings → Bindings 加一个 D1 database，变量名 DB）',
+        }, 503, cors);
+      }
       await ensureSchema(env);
 
-      if (url.pathname === '/api/health') {
-        return json({ ok: true, ts: Date.now() }, 200, cors);
-      }
       if (url.pathname === '/api/submit') {
         if (request.method !== 'POST') return json({ ok: false, msg: '只收 POST' }, 405, cors);
         return await handleSubmit(request, env, cors);

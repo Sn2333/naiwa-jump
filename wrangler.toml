@@ -1,0 +1,40 @@
+# 奶蛙一跳 · 排行榜后端（Cloudflare Worker + D1）
+#
+# 为什么这份配置放在「仓库根目录」而不是 worker/ 里：
+#   Cloudflare 用 GitHub 仓库自动构建时，默认在仓库根目录执行 `npx wrangler deploy`。
+#   根目录找不到配置文件就会直接报
+#     ✘ [ERROR] Missing entry-point: The entry-point should be specified via ...
+#   放在这里之后，构建设置一项都不用改，push 一下就部署。
+#
+# 两种部署方式：
+#   ① 仓库自动构建（推荐）
+#      Workers & Pages → Create → 连接这个仓库 → 保存并部署。
+#      构建设置全部保持默认：构建命令留空、部署命令 `npx wrangler deploy`、根目录留空。
+#      ⚠️ 控制台里这个 Worker 的名字必须和下面的 name 一模一样，否则构建会报
+#         "The name in your Wrangler configuration file must match the name of your Worker"。
+#   ② 本地命令行：在仓库根目录执行
+#      npx wrangler login && npx wrangler deploy
+
+name = "naiwa-jump-api"
+main = "worker/src/index.js"
+compatibility_date = "2026-09-01"
+
+# 打开后可以在控制台的 Worker → Logs 里看到请求日志和异常，排查时很有用
+[observability]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# D1 绑定
+#
+# database_id 在 Cloudflare → Storage & Databases → D1 → naiwa-board 的详情页上，
+# 是一串 8-4-4-4-12 的十六进制。**变量名必须是 DB**，代码里用的是 env.DB。
+#
+# 故意先注释掉：还没建库或者还没拿到 id 的时候，保持注释也能部署成功 ——
+# Worker 会正常起来，只是 /api/health 返回 503 并写清楚「没有绑定 D1」。
+# 这样构建不会因为一个占位字符串而失败，卡在哪一步一眼就能看出来。
+# 拿到 id 后把下面三行取消注释、填上 id，push 一下就自动部署。
+# ---------------------------------------------------------------------------
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "naiwa-board"
+# database_id = "填 naiwa-board 的 Database ID"

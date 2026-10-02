@@ -86,6 +86,7 @@ console.log('### 存活 / CORS ###');
 {
   const { res, data } = await call('GET', '/api/health', { origin: '' });
   check('无 Origin 的健康检查放行', res.status === 200 && data.ok === true, data);
+  check('健康检查报告已绑上 D1', data.db === true, data);
 
   const { res: r2 } = await call('GET', '/api/health', { origin: GH });
   check('github.io 的 CORS 回显正确',
@@ -192,6 +193,29 @@ console.log('\n### 输入校验 ###');
 
   const { res: r404 } = await call('GET', '/api/nope');
   check('未知路径返回 404', r404.status === 404, r404.status);
+}
+
+/* 没绑数据库是最容易卡住部署的一种状态：构建能过、Worker 也能起来，但一调接口就 500。
+ * 所以健康检查必须能在这种状态下明确说清楚「缺的是 D1 绑定」，而不是抛一个
+ * "Cannot read properties of undefined" 让人去猜。 */
+console.log('\n### 没绑 D1 时的报错要能看懂 ###');
+{
+  const bare = {};   // 没有 env.DB，模拟「Worker 部署了但 Bindings 里没加 D1」
+
+  const r1 = await worker.fetch(req('GET', '/api/health', { origin: '' }), bare);
+  const d1 = await r1.json();
+  check('健康检查返回 503、db:false，且文案里点明是 D1 绑定',
+    r1.status === 503 && d1.ok === false && d1.db === false && /D1/.test(d1.msg), d1);
+
+  const r2 = await worker.fetch(req('GET', '/api/rank?limit=10', { origin: GH }), bare);
+  const d2 = await r2.json();
+  check('榜单返回 503 而不是含糊的 500',
+    r2.status === 503 && d2.ok === false && /D1|数据库/.test(d2.msg), { s: r2.status, d: d2 });
+
+  const r3 = await worker.fetch(req('POST', '/api/submit', {
+    origin: GH, body: { nick: '奶蛙', score: 1 },
+  }), bare);
+  check('提交同样返回 503 而不是 500', r3.status === 503, r3.status);
 }
 
 /* ------------------------------------------------------------------ */

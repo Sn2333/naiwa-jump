@@ -30,7 +30,9 @@ js/hit.js           落点判定（圆砖、方块、八棱柱、弹簧砖、迷
 js/audio.js         WebAudio 音效
 js/sprite_data.js   30 角色的 WebP base64（由 dev/extract_chars.py 生成）
 js/vendor/          three.js r160（本地化，不依赖 CDN）
-worker/             排行榜后端：Cloudflare Worker + D1（含部署说明与离线回归）
+worker/             排行榜后端源码 + D1 表结构留档（部署说明见 worker/README.md）
+wrangler.toml       Worker 部署配置。**在仓库根目录**是必须的：Cloudflare 自动构建
+                    默认在根目录跑 `wrangler deploy`，放子目录会报 Missing entry-point
 dev/                开发脚本（打包、抠图、无头截图、探针、回归测试）
 ```
 
@@ -98,8 +100,15 @@ KV 的话每天只有 1000 次写、还没有事务，两人同时提交会互�
 - 一张表 `board`（`nick` 主键 / `best` / `updated_at`），建在 `best DESC` 上；
 - `POST /api/submit` 按昵称 upsert，只保留更高分，返回我的名次；
 - `GET /api/rank` 返回全服榜 + 我的名次；
+- `GET /api/health` 除了报存活，还会报**数据库有没有绑上** —— 「Worker 没起来」和
+  「起来了但没绑 D1」在浏览器里长得一样，这个接口把两种状态分开报（503 + 原因）；
 - 昵称字符集、长度、分数上限在服务端**再校验一遍**（不信客户端），比前端更严；
 - 服务端按 `Origin` 放行，所以前端不需要任何密钥 —— 换域名只是往白名单加一行。
+
+部署走 GitHub 自动构建：**构建设置全部保持默认**（部署命令 `npx wrangler deploy`、
+根目录留空），只要 Worker 名字和根目录 `wrangler.toml` 里的 `name` 一致就行。
+绑定写在 `wrangler.toml` 里（构建时配置文件是权威来源），没有 id 时那一段保持注释，
+部署照样成功。
 
 `js/api.js` 按优先级自动选后端，三种形态界面完全一样：
 

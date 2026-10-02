@@ -1,6 +1,6 @@
 # 排行榜后端部署（Cloudflare Workers + D1）
 
-一个文件、两个接口、零费用。全程在浏览器里点，不用装任何东西。
+一个文件、两个接口、零费用。免费套餐**不绑卡**，超额只会报错、不会产生费用。
 
 ## 为什么是 Worker + D1，不是 KV
 
@@ -20,71 +20,94 @@
 
 ---
 
-## 部署（浏览器操作，约 5 分钟）
+## 仓库里有哪几个文件
 
-### 1. 注册 Cloudflare
-
-<https://dash.cloudflare.com/sign-up> —— 邮箱 + 密码就行，**不需要信用卡**。
-
-### 2. 建数据库
-
-左侧 **Storage & Databases → D1 SQL database → Create**，名字填 `naiwa-board`。
-
-> 不用手动建表。Worker 第一次收到请求时会自己执行 `CREATE TABLE IF NOT EXISTS`
-> （见 `src/index.js` 的 `ensureSchema`）。`schema.sql` 只是同一份结构的留档。
-
-### 3. 建 Worker
-
-左侧 **Workers & Pages → Create → Workers → Create Worker**，名字填 `naiwa-jump-api`，
-点 **Deploy**。
-
-### 4. 粘代码
-
-点 **Edit code**，把编辑器里的示例代码全选删掉，然后把 **`src/index.js` 的全文**
-粘进去，点右上角 **Deploy**。
-
-### 5. 绑定数据库
-
-回到这个 Worker 的详情页 → **Settings → Bindings → Add binding → D1 database**：
-
-- Variable name：`DB`（**必须一字不差**，代码里用的是 `env.DB`）
-- D1 database：`naiwa-board`
-
-保存后重新 Deploy 一次。
-
-### 6. 验证
-
-浏览器打开这两条：
-
-```
-https://naiwa-jump-api.<你的子域>.workers.dev/api/health
-https://naiwa-jump-api.<你的子域>.workers.dev/api/rank?limit=10
-```
-
-第一条返回 `{"ok":true,"ts":...}` 就成了；第二条返回 `{"ok":true,"list":[],"me":null}`
-说明表和接口都通了。
-
-### 7. 接到前端
-
-把这个地址（**结尾不带斜杠**）填进 `index.html` 里的 `window.__API_BASE`：
-
-```js
-window.__API_BASE = 'https://naiwa-jump-api.xxxx.workers.dev';
-```
-
-填完之后前端会自动切到 Worker，腾讯云那套 CloudBase 回退代码就不再生效了。
+| 文件 | 作用 |
+|---|---|
+| `worker/src/index.js` | Worker 本体。自包含，不 import 任何东西，粘到控制台也能跑 |
+| `wrangler.toml` | **在仓库根目录**（不是这一层）。Cloudflare 自动构建默认在根目录执行 `wrangler deploy`，配置放根目录才找得到 |
+| `worker/schema.sql` | 表结构的留档。实际建表由 Worker 自己做，这份用于查字段、手动清库 |
 
 ---
 
-## 部署（命令行，可选）
+## 路线 A：连接 GitHub 仓库自动构建（推荐，push 即部署）
 
-装了 Node 的话：
+1. **建库**：左侧 **Storage & Databases → D1 SQL database → Create**，名字 `naiwa-board`。
+   建好后进详情页，把 **Database ID** 复制出来（一串 `8-4-4-4-12` 的十六进制）。
+
+2. **把这行填进仓库根目录的 `wrangler.toml`**，取消注释：
+
+   ```toml
+   [[d1_databases]]
+   binding = "DB"
+   database_name = "naiwa-board"
+   database_id = "刚才复制的 Database ID"
+   ```
+
+3. **连仓库**：**Workers & Pages → Create → Import a repository** → 选 GitHub 账号 →
+   选 `naiwa-jump` → 保存并部署。
+
+4. **构建设置全部保持默认**：
+
+   | 设置项 | 填什么 |
+   |---|---|
+   | 构建命令 | 留空 |
+   | 部署命令 | `npx wrangler deploy`（默认值） |
+   | 根目录 | **留空** |
+
+5. **Worker 名字必须对得上**。控制台里这个 Worker 的名字要和 `wrangler.toml` 里的
+   `name = "naiwa-jump-api"` 一字不差，否则构建直接失败并报
+   `The name in your Wrangler configuration file must match the name of your Worker`。
+   建项目时名字就填 `naiwa-jump-api` 最省事。
+
+6. **验证**：浏览器打开
+   `https://naiwa-jump-api.<你的子域>.workers.dev/api/health`
+
+---
+
+## 路线 B：不连仓库，浏览器里手点（约 5 分钟）
+
+1. 建库同上（`naiwa-board`）。
+2. **Workers & Pages → Create → Workers → Create Worker**，名字填 `naiwa-jump-api`，Deploy。
+3. 点 **Edit code**，把示例代码全选删掉，粘进 `worker/src/index.js` 全文，Deploy。
+4. 进这个 Worker 的 **Settings → Bindings → Add binding → D1 database**：
+   - Variable name：`DB`（**必须一字不差**，代码里用的是 `env.DB`）
+   - D1 database：`naiwa-board`
+5. 保存后再 Deploy 一次。
+
+> 这条路线下绑定来自控制台。**路线 A 下以 `wrangler.toml` 为准** —— 构建时配置文件是
+> 权威来源，所以在仓库里跑自动构建时，绑定请写进 `wrangler.toml`。
+
+---
+
+## 卡住了就看 `/api/health`
+
+部署完第一次排查时，「Worker 没起来」和「Worker 起来了但没绑数据库」在浏览器里
+长得一模一样。所以健康检查故意多做了一件事，把这两种情况分开报：
+
+| 返回 | 含义 | 怎么办 |
+|---|---|---|
+| `200 {"ok":true,"db":true,...}` | 全通了 | 继续 |
+| `503 {"ok":false,"db":false,"msg":"...没有绑定 D1..."}` | Worker 正常，缺 Bindings | 按上面的步骤 4 加绑定 |
+| `503 {"ok":false,"db":false,"msg":"D1 绑上了，但建表失败：..."}` | 绑定了但库不对 | 看 msg 里 D1 的原始报错 |
+| 502 / 页面打不开 / 构建日志报错 | Worker 没部署上去 | 看 **Deployments → View build history** |
+
+构建失败的三种典型报错：
+
+- `Missing entry-point: ...` —— 根目录没找到 `wrangler.toml`，把「根目录」留空
+- `The name in your Wrangler configuration file must match ...` —— Worker 名字对不上
+- `Could not route to /client/v4/accounts//workers/services/` —— 配置里多了 `account_id`，删掉
+
+---
+
+## 命令行部署（可选）
+
+装了 Node 的话，在**仓库根目录**：
 
 ```bash
-cd worker
 npx wrangler login
 npx wrangler d1 create naiwa-board     # 把输出的 database_id 填进 wrangler.toml
-npx wrangler deploy
+npx wrangler deploy                    # 首次会自动建表
 ```
 
 ---
@@ -95,7 +118,7 @@ npx wrangler deploy
 |---|---|---|
 | `POST` | `/api/submit` | body `{nick, score}`，按昵称 upsert 更高分，返回 `{ok, nick, best, rank}` |
 | `GET` | `/api/rank?limit=100&nick=xxx` | 返回 `{ok, list:[{rank,nick,best}], me:{rank,best}\|null}` |
-| `GET` | `/api/health` | 存活探针 |
+| `GET` | `/api/health` | 存活探针 + 数据库绑定自检（见上一节） |
 
 昵称规则（前端和这里各校验一遍，服务端不信任客户端）：
 
@@ -105,7 +128,7 @@ npx wrangler deploy
 
 ## 来源白名单
 
-`src/index.js` 顶部的 `ORIGIN_PATTERNS` 决定哪些网站可以调用这个后端。现在放行：
+`worker/src/index.js` 顶部的 `ORIGIN_PATTERNS` 决定哪些网站可以调用这个后端。现在放行：
 
 ```
 https://sn2333.github.io                  ← GitHub Pages
@@ -126,7 +149,7 @@ http://localhost:* / http://127.0.0.1:*   ← 本地开发
 | D1 存储 | 5 GB | 一个昵称几十字节 |
 
 也就是**每天 10 万次提交、拉榜基本不设限**，比腾讯云那份免费额度的量级大得多。
-额度按天重置（UTC 零点），用完接口报错、不会产生费用 —— 免费套餐根本不绑卡。
+额度按天重置（UTC 零点），用完接口报错、不会产生费用。
 
 ## 运维小抄
 
