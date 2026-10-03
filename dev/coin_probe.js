@@ -77,8 +77,8 @@ const notice = {
   giftLine: (document.querySelector('#noticeBody .noticeGift') || {}).textContent || '',
   giftBtn: !!document.querySelector('#noticeBody .giftBtn'),
   ownedBefore: g.ownsAcc('hat_birthday'),
-  /* 第二条（生日帽）必须没有正文 —— 那篇的正文用户要自己写 */
-  secondBody: !!(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[1]),
+  /* 第三条（生日帽）必须没有正文 —— 那篇的正文用户要自己写 */
+  thirdBody: !!(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[2]),
 };
 /* 1b) 公告附赠：点「领取」→ 生日帽进拥有清单、判重键落盘、按钮切成"已领取"。
  *     ★ 生日帽已经**从商店下架**，公告是它唯一的来源，所以这条必须真跑通。 */
@@ -730,12 +730,12 @@ const settings = {
 
 /* 落正中心 = perfect：base 1 + 连击 1 的 2 分 = 3，×2 之后必须是 6 */
 const ok = dotOn === true && notice.panel === true && notice.dot === false
-  /* 两条公告：v1.1（带正文）在前、生日帽（无正文）在后 */
-  && notice.hasPanel === true && notice.items === 2
+  /* 三条公告：紧急通知（带正文）→ v1.1（带正文）→ 生日帽（无正文） */
+  && notice.hasPanel === true && notice.items === 3
   && notice.date.indexOf('2026-10-03') >= 0
-  && notice.title.indexOf('v1.1') >= 0
-  && notice.firstBody.indexOf('优化了游戏机制') >= 0
-  && notice.secondBody === false
+  && notice.title.indexOf('紧急通知') >= 0
+  && notice.firstBody.indexOf('浏览器缓存') >= 0 && notice.firstBody.indexOf('特此通知') >= 0
+  && notice.thirdBody === false
   && notice.giftLine.indexOf('生日帽') >= 0 && notice.giftBtn === true
   && notice.ownedBefore === false                     // 弹出来的时候还没领
   /* 领完：进拥有清单、按钮切"已领取"且禁用、判重键落盘、重复触发幂等 */
@@ -744,7 +744,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && gift.keys.indexOf('2026-10-02:hat_birthday') >= 0
   && giftAgain.owned === true && giftAgain.keys === gift.keys.length
   && noticeClosed.panel === false && noticeClosed.dot === false
-  && noticeClosed.seen === '3'                 // NOTICE_VERSION 变了这里要跟着改
+  && noticeClosed.seen === '4'                 // NOTICE_VERSION 变了这里要跟着改
   && noticeClosed.hasPanel === false
   && noticeAgain === false
   /* 商店：生日帽已下架，只剩"角色"一栏、放着 50 奶币的大笑奶蛙 */
