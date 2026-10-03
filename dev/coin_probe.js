@@ -127,7 +127,7 @@ const shop = {
   /* ★ 生日帽改成公告赠礼之后，商店里**一个字都不该出现** */
   hatGone: txt('shopShelf').indexOf('生日帽') < 0,
   accHead: txt('shopShelf').indexOf('头饰') >= 0,   // 只有赠品装饰 → 整栏都不该有
-  price500: txt('shopShelf').indexOf('500') >= 0,   // 大笑奶蛙 500
+  price50: txt('shopShelf').indexOf('50') >= 0,     // 大笑奶蛙 50
 };
 document.getElementById('shopClose').click();
 await sleep(250);
@@ -589,10 +589,10 @@ const unequipped = {
   stored: localStorage.getItem('jump3d_acc_head'),
 };
 
-/* ---------- 8f) 角色买卖 + 动图角色（大笑奶蛙 500 奶币） ---------- */
+/* ---------- 8f) 角色买卖 + 动图角色（大笑奶蛙 50 奶币） ---------- */
 /* 钱不够：拒绝，余额和拥有清单都不许动 */
 const charId = 'laugh';
-const charPrice = 500;
+const charPrice = 50;
 g.coins = charPrice - 1;
 try { localStorage.setItem('jump3d_coins', String(g.coins)); } catch (e) { /* 忽略 */ }
 const charPoorErr = g.buyChar(charId);
@@ -747,10 +747,10 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && noticeClosed.seen === '3'                 // NOTICE_VERSION 变了这里要跟着改
   && noticeClosed.hasPanel === false
   && noticeAgain === false
-  /* 商店：生日帽已下架，只剩"角色"一栏、放着 500 奶币的大笑奶蛙 */
+  /* 商店：生日帽已下架，只剩"角色"一栏、放着 50 奶币的大笑奶蛙 */
   && shop.panel === true && shop.hasPanel === true && shop.coins === '7'
   && shop.coinIco === 1 && shop.hatGone === true && shop.accHead === false
-  && shop.heads === '角色' && shop.charBuy === 1 && shop.price500 === true
+  && shop.heads === '角色' && shop.charBuy === 1 && shop.price50 === true
   && shopClosed.panel === false && shopClosed.hasPanel === false
   /* —— 奶币：砖上实体 / 拾取 / 累计 / 结算 —— */
   && coinsStart === 7
@@ -822,7 +822,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   /* 角色买卖 + 动图角色 */
   && charPoor.err === '奶币不够' && charPoor.owned === false
   && charPoor.coins === charPrice - 1                          // 拒绝时余额分毫不动
-  && charBought.err === null && charBought.coins === 40        // 540 - 500
+  && charBought.err === null && charBought.coins === 40        // 90 - 50
   && charBought.owned === true && charBought.stored.indexOf(charId) >= 0
   && anim.key === charId && anim.isAnim === true
   && anim.frames > 1 && anim.cols > 1 && anim.rows > 1
