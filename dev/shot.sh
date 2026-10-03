@@ -9,6 +9,16 @@
 #      机器一忙就误判失败。现在改成轮询等文件出现。
 #   3) 不能用 rm -rf 清 profile —— 会撞上沙箱的"安全删除"拦截，脚本直接判失败。
 #      改成每次重试都开一个全新的 profile 目录（名字带 $$ / 序号 / $RANDOM）。
+#
+# ★ 第四个坑（2026-10-03 踩到）：`--window-size=360,800` 出来的 PNG 确实是
+#   360×800，但**页面视口不是 360** —— 布局按更宽的视口算、再裁到 360 宽，
+#   于是"屏幕上明明放得下"的一排按钮看起来像被右边缘切掉了。
+#   首页那排 emoji 图标钮就因此被误判过一轮（差一点去改本来没坏的 CSS）。
+#   → **量窄屏布局请用 probe.mjs**：它走 CDP 的
+#     Emulation.setDeviceMetricsOverride，视口是精确的，还能顺便读
+#     getBoundingClientRect 把数值打印出来：
+#       PROBE_W=360 PROBE_H=800 node dev/probe.mjs <url> <out.png> 3000
+#     shot.sh 只用来拍"宽屏概览"，别用它判断窄屏有没有溢出。
 PARAMS="$1"; OUT="$2"; BUDGET="${3:-4000}"; W="${4:-1280}"; H="${5:-780}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EDGE="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"

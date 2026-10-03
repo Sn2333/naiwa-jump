@@ -86,6 +86,27 @@ three_wrapped = (
 sprite_src = (JS / "sprite_data.js").read_text(encoding="utf-8")
 sprite_src = sprite_src.replace("export const ", "const ")
 
+# 奶币 + 装饰贴图（内联 data URI）和装饰注册表。
+# 这两份要和 character.js 同处一个 IIFE（character.js 直接用 accDef / ACC_IMG），
+# 同时又得让 game.js 用得上 —— 所以放进 __M 再注入 game 那个 IIFE，
+# 而不是把几十 KB 的 data URI 复制两份。
+acc_data_raw = (JS / "acc_data.js").read_text(encoding="utf-8")
+acc_data_names = exports_of(acc_data_raw)
+acc_data_src = re.sub(r"^export ", "", acc_data_raw, flags=re.M)
+
+acc_raw = (JS / "acc.js").read_text(encoding="utf-8")
+acc_names = exports_of(acc_raw)
+acc_src = strip_imports(acc_raw)
+acc_src = re.sub(r"^export ", "", acc_src, flags=re.M)
+acc_all_names = acc_data_names + acc_names
+
+# 动图角色（大笑奶蛙）：一张雪碧图 + 每帧时长。character.js 直接引用 ANIM_CHARS，
+# 所以和它放进同一个 IIFE 就行，不必绕 __M 转一手。
+anim_raw = (JS / "anim_data.js").read_text(encoding="utf-8")
+anim_names = exports_of(anim_raw)
+assert "ANIM_CHARS" in anim_names, "anim_data.js 没有导出 ANIM_CHARS"
+anim_src = re.sub(r"^export ", "", anim_raw, flags=re.M)
+
 char_src = (JS / "character.js").read_text(encoding="utf-8")
 char_src = strip_imports(char_src)
 char_src = re.sub(r"^export ", "", char_src, flags=re.M)
@@ -99,8 +120,9 @@ audio_src = (JS / "audio.js").read_text(encoding="utf-8")
 audio_src = audio_src.replace("export class Sound", "class Sound")
 audio_src = audio_src.replace("export const sound", "const sound")
 
-hit_src = (JS / "hit.js").read_text(encoding="utf-8")
-hit_src = re.sub(r"^export ", "", hit_src, flags=re.M)
+hit_raw = (JS / "hit.js").read_text(encoding="utf-8")
+hit_names = exports_of(hit_raw)
+hit_src = re.sub(r"^export ", "", hit_raw, flags=re.M)
 
 # 昵称 / 排行榜的后端适配层（api.js，单独一个 IIFE）
 api_raw = (JS / "api.js").read_text(encoding="utf-8")
@@ -113,7 +135,24 @@ game_raw = (JS / "game.js").read_text(encoding="utf-8")
 game_needs = [n for n in imports_from(game_raw, "api.js") if n in api_names]
 missing_api = set(imports_from(game_raw, "api.js")) - set(api_names)
 assert not missing_api, f"game.js 引用了 api.js 没导出的符号：{sorted(missing_api)}"
+# 装饰 / 奶币同理：从 acc.js 与 acc_data.js 里按需注入
+acc_imports = imports_from(game_raw, "acc.js") + imports_from(game_raw, "acc_data.js")
+game_needs_acc = [n for n in acc_imports if n in acc_all_names]
+missing_acc = set(acc_imports) - set(acc_all_names)
+assert not missing_acc, f"game.js 引用了装饰模块没导出的符号：{sorted(missing_acc)}"
 game_src = strip_imports(game_raw)
+
+# 音效（奶龙大笑 mp3）与两张收款码：只有 game.js 用得上，直接整段塞进 game 那个
+# IIFE —— 里面的 const 就是它的作用域顶层，不需要再经 __M 转手（转手等于把
+# 两百多 KB 的 data URI 在产物里存两份）。
+media_raw = (JS / "media_data.js").read_text(encoding="utf-8")
+media_names = exports_of(media_raw)
+media_src = strip_imports(media_raw)
+media_src = re.sub(r"^export ", "", media_src, flags=re.M)
+media_want = imports_from(game_raw, "media_data.js")
+assert media_want, "game.js 没有从 media_data.js 引入任何东西（改名了？）"
+missing_media = set(media_want) - set(media_names)
+assert not missing_media, f"game.js 引用了媒体模块没导出的符号：{sorted(missing_media)}"
 
 bundle = (
     three_wrapped
@@ -121,15 +160,20 @@ bundle = (
     + "(function(){\n" + sprite_src
     + "\n__M.CHARS = CHARS;\n__M.DEFAULT_CHAR = DEFAULT_CHAR;\n})();\n"
     + "(function(THREE){\nconst CHARS = __M.CHARS;\nconst DEFAULT_CHAR = __M.DEFAULT_CHAR;\n"
+    + acc_data_src + "\n" + anim_src + "\n" + acc_src
     + char_src + "\n" + theme_src
     + "\n__M.Character3D = Character3D;\n__M.charList = charList;\n__M.charDef = charDef;\n"
-    + "__M.bgList = bgList;\n__M.bgDef = bgDef;\n__M.DEFAULT_BG = DEFAULT_BG;\n})(__THREE);\n"
+    + "__M.bgList = bgList;\n__M.bgDef = bgDef;\n__M.DEFAULT_BG = DEFAULT_BG;\n"
+    + expose_for(acc_all_names)
+    + "})(__THREE);\n"
     + "(function(){\n" + audio_src + "\n__M.sound = sound;\n})();\n"
     + "(function(){\n" + api_src + "\n" + expose_for(api_names) + "})();\n"
     + "(function(THREE){\nconst Character3D = __M.Character3D;\nconst sound = __M.sound;\n"
-    + "const charList = __M.charList;\nconst DEFAULT_CHAR = __M.DEFAULT_CHAR;\n"
+    + "const charList = __M.charList;\nconst charDef = __M.charDef;\n"
+    + "const DEFAULT_CHAR = __M.DEFAULT_CHAR;\n"
     + "const bgList = __M.bgList;\nconst bgDef = __M.bgDef;\nconst DEFAULT_BG = __M.DEFAULT_BG;\n"
-    + decls_for(game_needs)
+    + decls_for(game_needs) + decls_for(game_needs_acc)
+    + media_src + "\n"
     + hit_src + "\n"
     + game_src + "\n})(__THREE);\n"
 )
@@ -138,6 +182,21 @@ bundle = (
 _used = set(re.findall(r"=\s*__M\.(\w+);", bundle))
 _defined = set(re.findall(r"__M\.(\w+)\s*=", bundle))
 assert not (_used - _defined), f"打包产物缺少注入：{sorted(_used - _defined)}"
+
+# 防御 2（更严）：game.js 从**本地模块**引入的每一个符号，在 game 那个 IIFE 里
+# 都必须有一份来源 —— 要么是 __M 解构（api/acc/character/theme/sprite），
+# 要么是被整段内联进去的（media_data 的常量、hit.js 的函数）。
+# 上一版只查 `= __M.x`，所以 game.js 用了 character.js 的符号却没 import 时
+# （`?ownchar` 那条调试路径真的漏了 charDef）单文件版会静默 ReferenceError。
+GAME_IIFE_LOCALS = {
+    "Character3D", "sound", "charList", "charDef", "DEFAULT_CHAR",
+    "bgList", "bgDef", "DEFAULT_BG",
+}
+_gm_satisfied = GAME_IIFE_LOCALS | set(game_needs) | set(game_needs_acc) | set(media_names) | set(hit_names)
+for _mod in ("api.js", "acc.js", "acc_data.js", "character.js", "theme.js",
+             "sprite_data.js", "hit.js", "media_data.js"):
+    for _n in imports_from(game_raw, _mod):
+        assert _n in _gm_satisfied, f"单文件版缺少 {_mod} 的注入：{_n}"
 
 out_name = "奶蛙一跳.html"
 argv = sys.argv[1:]

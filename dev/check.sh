@@ -20,14 +20,32 @@ echo
 # 关键一步：单文件打包版会掩盖"漏 import"这类 bug（各模块共处一个 IIFE，
 # 作用域共享），只有真正的 module 形态才会暴露 —— 而部署上线的正是这一份。
 echo "### module 形态实测（= 线上部署的那份） ###"
-PORT=8899
+# 端口不能写死：8899 常被别的进程占着，抢占失败后 http.server 会直接退出，
+# 后面的探针就全打在空气上（表现为 ERR_CONNECTION_REFUSED）。
+# 这里从 8899 起找一个"真的能起服务"的端口，起完还要探活，成功才往下走。
+: "${PY:=python}"
+start_http() {
+  for p in 8899 8900 8901 8902 8903 8904; do
+    "$PY" -m http.server "$p" --bind 127.0.0.1 >/dev/null 2>&1 &
+    local pid=$!
+    for i in $(seq 1 20); do
+      if "$NODE" -e "fetch('http://127.0.0.1:$p/index.html').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+        PORT=$p; HTTPD=$pid; return 0
+      fi
+      sleep 0.2
+    done
+    kill $pid 2>/dev/null
+  done
+  return 1
+}
+if ! start_http; then echo "✗ 找不到可用端口起本地服务"; exit 1; fi
 MOCK_PORT=8787
 "$PY" -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &
 HTTPD=$!
 "$NODE" dev/mock_worker.mjs "$MOCK_PORT" >/dev/null 2>&1 &
 MOCK=$!
 trap 'kill $HTTPD $MOCK 2>/dev/null' EXIT
-sleep 2
+echo "本地服务: http://127.0.0.1:$PORT"
 "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html" "$SHOT_DIR/_check_module.png" 3500 || rc=1
 echo
 
@@ -41,6 +59,58 @@ if echo "$CLICK_OUT" | grep -q '"ok":true'; then
 else
   echo "  ✗ 点击被遮挡或蓄力失效："
   echo "$CLICK_OUT" | grep -A2 "PROBE_RUN 结果" || echo "$CLICK_OUT" | tail -20
+  rc=1
+fi
+echo
+
+# 暂停 / 返回标题实测：五条链路（暂停→继续 / 蓄力中暂停的松手坑 /
+# 暂停面板回标题 / 结算页回标题）。这是唯一一条"页面内部状态 + 视觉"都要
+# 同时对上的链路，所以和点击探针一样走真实点击 + computed style。
+echo "### 暂停 / 返回标题实测 ###"
+PAUSE_OUT=$(PROBE_RUN="$(cat dev/pause_probe.js)" \
+  "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html" "$SHOT_DIR/_check_pause.png" 4000 2>&1)
+if echo "$PAUSE_OUT" | grep -q '"ok":true'; then
+  echo "  ✓ 暂停/继续/蓄力中暂停/回标题 全链路通过"
+else
+  echo "  ✗ 暂停或返回标题链路失败："
+  echo "$PAUSE_OUT" | grep -A2 "PROBE_RUN 结果" || echo "$PAUSE_OUT" | tail -20
+  rc=1
+fi
+echo
+
+# 碰撞体积实测：落脚判定用每只角色剪影实测的脚底接触半径（def.foot），
+# 不再是"所有角色一个点"。同一个超缘落点，宽脚掌的蛙站得住、单脚的虎摔下去。
+echo "### 碰撞体积（按角色建模）实测 ###"
+FOOT_OUT=$(PROBE_RUN="$(cat dev/foot_probe.js)" \
+  "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?plain&kind=round&r=0.8&gap=2.6" \
+  "$SHOT_DIR/_check_foot.png" 4000 2>&1)
+if echo "$FOOT_OUT" | grep -q '"ok":true'; then
+  echo "  ✓ foot 数据链路 + 同点虎摔/蛙站 行为差异 全过"
+else
+  echo "  ✗ 碰撞体积回归失败："
+  echo "$FOOT_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$FOOT_OUT" | tail -20
+  rc=1
+fi
+echo
+
+# 货币 / 商店 / 公告(含赠礼) / 新砖种 / 冰冰冰 / 角色买卖 / 动图角色 / 装饰 / 设置 / 渲染循环防异常实测。
+# 其中"渲染循环防异常"是「标题界面有概率卡住」的根因回归：vendor 的
+# WebGLAnimation 先回调后调度，tick 抛一次异常就会让 rAF 链断掉、画面永久定格。
+# 装饰部分验的是「公告领赠品 → 装备 → 3D 真的挂上 → 换角色不掉 → 卸下」，
+# 角色部分验的是「买不起拒绝 / 买下扣款 → 选中后雪碧图动图真的在推帧」。
+echo "### 奶币/商店/公告赠礼/脆砖/特殊砖/冰冰冰/奶块大笑/角色/装饰/循环防异常 实测 ###"
+COIN_OUT=$(PROBE_RUN="$(cat dev/coin_probe.js)" \
+  "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?coin=7&coins=1&plain&seenotice&kind=round&r=0.8&gap=2.6" \
+  "$SHOT_DIR/_check_coin.png" 3000 2>&1)
+if echo "$COIN_OUT" | grep -q '"ok":true'; then
+  echo "  ✓ 公告自动弹+附赠领取(幂等·落盘)、生日帽已下架商店、商店余额、"
+  echo "    砖上奶币实体(拾取累加·结算×10·与分数无关)、脆砖碎裂、×2 翻倍、"
+  echo "    弹簧/粘液/冰冰冰/磁铁/圣光 五种效果砖（含弹簧助推只活一跳）、"
+  echo "    冰冰冰三冰块模型+物理材质(ior 1.31/无顶面图案)、奶块顶面蛙脸+大笑受开关控制、"
+  echo "    角色买卖与雪碧图动图推帧、设置开关/音量滑条落盘、装饰装载、循环防异常 全过"
+else
+  echo "  ✗ 货币/公告赠礼/新砖种/角色/装饰链路失败："
+  echo "$COIN_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$COIN_OUT" | tail -25
   rc=1
 fi
 echo

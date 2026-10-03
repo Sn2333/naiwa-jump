@@ -134,6 +134,19 @@ if (location.search.indexOf('dbg') >= 0) {
   #muteBtn:active { transform: scale(.92); }
   #muteBtn.off { opacity: .55; }
 
+  /* 暂停按钮放在左上角 —— 右上角已经被「最佳」和音效开关占满了，
+     挪到左边不用动任何已有元素的定位，也就不会碰坏之前调好的排版 */
+  #pauseBtn {
+    position: absolute; top: max(24px, env(safe-area-inset-top)); left: 18px;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--glass); border: 1px solid var(--glass-line);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    color: var(--ink); font-size: 16px; cursor: pointer;
+    display: grid; place-items: center; pointer-events: auto;
+    transition: transform .15s ease;
+  }
+  #pauseBtn:active { transform: scale(.92); }
+
   #comboTag {
     position: absolute; top: max(112px, calc(env(safe-area-inset-top) + 100px)); left: 50%;
     transform: translateX(-50%) translateY(-8px) scale(.9);
@@ -162,6 +175,47 @@ if (location.search.indexOf('dbg') >= 0) {
     transition: width .04s linear;
   }
 
+  /* 常驻状态条：弹簧射程加成 / 粘液射程削减。这两个数决定"现在能跳多远"，
+     不显示的话玩家会以为是游戏坏了。跟 comboTag 同一套胶囊语言。 */
+  #buffTag {
+    position: absolute; top: max(152px, calc(env(safe-area-inset-top) + 140px)); left: 50%;
+    transform: translateX(-50%) translateY(-6px) scale(.94);
+    padding: 5px 14px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    letter-spacing: 1px; white-space: nowrap;
+    color: var(--ink); background: var(--glass); border: 1px solid var(--glass-line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    opacity: 0; transition: all .22s cubic-bezier(.34, 1.56, .64, 1);
+  }
+  #buffTag.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  body.intro #buffTag { opacity: 0; }
+
+  /* 本局奶币计数器：捡到一枚就 +1，钉在左上角（暂停键下面）—— 右上角被
+     「最佳」和音效开关占满了，左上只有暂停键，往下让一行刚好空着。
+     只在捡到过之后才出现（数字为 0 时是空的），免得开局就多个没用的徽章。
+     注意它记的是**本局捡到的**，真账要到结算才入包 —— 标题页那个 #coinTag 才是余额。 */
+  #runCoinTag {
+    position: absolute; top: max(76px, calc(env(safe-area-inset-top) + 54px)); left: 18px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 14px 5px 9px; border-radius: 999px;
+    background: var(--glass); border: 1px solid var(--glass-line);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 15px; font-weight: 800; color: var(--accent);
+    font-variant-numeric: tabular-nums; letter-spacing: .5px;
+    opacity: 0; transform: translateY(-6px) scale(.9);
+    transition: all .22s cubic-bezier(.34, 1.56, .64, 1);
+  }
+  #runCoinTag .coinIco { width: 20px; height: 20px; }
+  #runCoinTag.show { opacity: 1; transform: translateY(0) scale(1); }
+  body.intro #runCoinTag { opacity: 0; }
+  /* 每捡到一枚弹一下。首尾都停在 .show 的 transform 上，所以动画结束后
+     回到类样式不会跳一下。 */
+  #runCoinTag.pop { animation: coinBump .3s cubic-bezier(.34, 1.56, .64, 1); }
+  @keyframes coinBump {
+    0% { transform: translateY(0) scale(1); }
+    42% { transform: translateY(0) scale(1.24); }
+    100% { transform: translateY(0) scale(1); }
+  }
+
   #hint {
     position: absolute; left: 50%; bottom: max(84px, calc(env(safe-area-inset-bottom) + 72px));
     transform: translateX(-50%);
@@ -186,11 +240,49 @@ if (location.search.indexOf('dbg') >= 0) {
     text-shadow: 0 2px 12px rgba(0, 0, 0, .65), 0 0 22px rgba(255, 255, 255, .25);
     animation: floatUp 1.05s cubic-bezier(.22, .9, .3, 1) forwards;
   }
+  /* 特殊砖块的玩法提示：带底色胶囊、停留更久（时长由 JS 按 ms 写进
+   * animationDuration）。这类提示是玩家判断下一步的依据，和"加分飘字"不是一个用途。
+   *
+   * ★ 字号调过两次，别再放大：
+   *   第一版 26px / 内边距 7×18 —— 截图实测最长那句（「脆砖 1.4 秒后碎裂，快走」）
+   *   在 430px 手机视口下宽 367px，**占屏 85%**，把砖和人一起挡住（玩家反馈"太大"）。
+   *   现在 15px / 3×11 → 同视口宽约 212px（≈49%），比普通飘字宽一点、矮一截。
+   *   长句子靠"停得久（TIP.ms=2400）+ 有底色"抓眼睛，不靠体型 —— 字号**必须**小于
+   *   普通 .pop（22px），它是坐在暗色胶囊上的，小了照样一眼看见。
+   *   改完请用手机视口（430×880）截图复核宽度，别只在宽的桌面窗口上看。 */
+  .pop-strong {
+    font-size: 15px; padding: 3px 11px; border-radius: 999px;
+    background: rgba(22, 18, 34, .78);
+    box-shadow: 0 2px 9px rgba(0, 0, 0, .34), inset 0 0 0 1px rgba(255, 255, 255, .18);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    text-shadow: 0 1px 5px rgba(0, 0, 0, .8);
+    letter-spacing: .1px;
+  }
   @keyframes floatUp {
     0% { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
     18% { opacity: 1; transform: translate(-50%, -68%) scale(1.12); }
     100% { opacity: 0; transform: translate(-50%, -190%) scale(1); }
   }
+  /* 长停留的提示不要一直往上飘 —— 飘到顶就看不见了。
+   * 前 12% 弹出来，之后一路轻轻浮，最后 15% 才淡出。 */
+  @keyframes floatUpHold {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
+    12% { opacity: 1; transform: translate(-50%, -72%) scale(1.08); }
+    85% { opacity: 1; transform: translate(-50%, -104%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -118%) scale(1); }
+  }
+  .pop-strong { animation-name: floatUpHold; }
+
+  /* ---------------- 奶币图标 ----------------
+   * 用真图不用 emoji：奶币是这只蛙的正面压印，emoji 表达不出来。
+   * 尺寸跟着 font-size 走，所以徽章、商店大字、按钮里能直接复用。 */
+  .coinIco {
+    width: 1.06em; height: 1.06em; vertical-align: -0.17em; display: inline-block;
+    filter: drop-shadow(0 1px 2px rgba(120, 78, 0, .38));
+  }
+  #coinTag, #shopCoins { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  #coinTag b, #shopCoins b { font-variant-numeric: tabular-nums; }
+  #shopCoins .coinIco { width: 34px; height: 34px; }
 
   /* ---------------- 覆盖层 ---------------- */
   #startScreen, #overScreen {
@@ -264,9 +356,57 @@ if (location.search.indexOf('dbg') >= 0) {
     /* body 上关掉了触摸手势（防止拖动误触发蓄力），这里要单独放开纵向滚动 */
     touch-action: pan-y;
   }
+
+  /* ---------------- 装饰行（角色面板顶部） ----------------
+   * 不占主滚动区：#charGrid 是 flex:1 的滚动容器，装饰行固定在它上面，
+   * 选角色时滚到底也不会把装饰行滚走 —— 换角色、换帽子是两件事，别互相挤。 */
+  #accBar {
+    width: min(760px, 94vw); margin-bottom: 10px; pointer-events: auto;
+  }
+  #accBar:empty { display: none; }
+  #accBar h4 {
+    margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 2px;
+    color: var(--ink-dim);
+  }
+  .accRow { padding: 8px 10px 10px; border-radius: 14px; background: var(--cell-bg); }
+  .accGrid {
+    display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px; touch-action: pan-x;
+  }
+  .accCell {
+    position: relative; flex: 0 0 auto; width: 80px;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 7px 4px 6px; border-radius: 12px; cursor: pointer;
+    background: var(--ghost-bg); border: 1px solid transparent;
+    font: inherit; color: inherit;
+    transition: transform .14s ease, border-color .14s ease, background .14s ease;
+  }
+  .accCell:active { transform: scale(.95); }
+  .accCell .accThumb {
+    position: relative;
+    width: 46px; height: 46px; display: grid; place-items: center;
+    font-style: normal; font-size: 18px; color: var(--ink-dim);
+    background: rgba(128, 128, 128, .10); border-radius: 10px;
+  }
+  .accCell .accThumb img { width: 44px; height: 44px; object-fit: contain; }
+  .accCell span {
+    font-size: 11px; color: var(--ink-dim); letter-spacing: .3px;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .accCell.on {
+    background: var(--cell-on-bg); border-color: var(--cell-on-line);
+    box-shadow: 0 6px 18px rgba(255, 190, 70, .18);
+  }
+  .accCell.on span { color: var(--cell-on-ink); font-weight: 700; }
+  /* 没买的：整体压暗就够表态了。**这里不显示价格** —— 价格是商店的事，
+     选装饰时只看"有没有"，价钱挤在缩略图上既挡脸又让人分心（玩家反馈）。
+     想买就点它跳商店，商店里那一条才带售价。 */
+  .accCell.locked { opacity: .58; }
   .charCell {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
     padding: 10px 4px 8px; border-radius: 14px; cursor: pointer;
+    /* 价签（.charLock）要绝对定位挂在格子角上，所以这里必须是定位上下文 */
+    position: relative;
     background: var(--cell-bg);
     border: 1px solid transparent;
     font: inherit; color: inherit;
@@ -281,6 +421,18 @@ if (location.search.indexOf('dbg') >= 0) {
     box-shadow: 0 6px 20px rgba(255, 190, 70, .18);
   }
   .charCell.on span { color: var(--cell-on-ink); font-weight: 700; }
+  /* 没买的角色：右下角挂一枚价签。
+   * 和 `.accCell.locked` 的"只压暗、不标价"刻意不同 —— 角色是主要付费点，
+   * 站在选择面板里就该直接看见要多少钱；点了跳去商店才不会莫名其妙。 */
+  .charLock {
+    position: absolute; right: 4px; top: 6px;
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 2px 7px 2px 5px; border-radius: 999px;
+    font-size: 11px; font-weight: 800; font-style: normal;
+    color: #4A2E00; background: linear-gradient(180deg, #FFE08A, #F5B93C);
+    box-shadow: 0 2px 8px rgba(180, 120, 0, .30);
+  }
+  .charLock .coinIco { width: 13px; height: 13px; vertical-align: 0; filter: none; }
   /* 背景格子：色块本身就是预览，所以比角色格子矮一点 */
   .charCell.swatch { padding: 10px 4px 8px; }
   .charCell .swatchBox {
@@ -309,9 +461,76 @@ if (location.search.indexOf('dbg') >= 0) {
   #overRank b { color: var(--accent); font-variant-numeric: tabular-nums; }
   #overRank:empty { display: none; }
   .btnRow { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  /* emoji 入口：方形小圆钮，只放图标。这排从三排文字按钮收成一排图标，
+   * 首页竖向空间省下两排多，3D 角色和砖块才露得出来。
+   * 功能不靠文字认，靠 title（悬停）与 aria-label（读屏）。
+   * ★ 用 grid 等分而不是 flex 包一排：flex 下按钮宽度是算出来的，
+   *   窄屏只剩几像素余量、换个字体渲染就掉行；grid 列宽跟着容器缩，
+   *   一行永远是这七个，窄屏只是整体变小。 */
+  .emojiRow {
+    display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 9px; justify-content: center; align-items: center;
+    /* ★ 宽度必须显式给：#startScreen 是 flex column + align-items:center，
+     *   而 flex 子项在交叉轴上会收缩到 fit-content —— 只写 grid 的话容器宽
+     *   锁死在"七格按 54px 算"的宽度，窄屏里最后一个按钮直接顶出屏幕。
+     *   宽屏封顶 369（比六个时略挤一点，七个 45px 一列排满），
+     *   窄屏整排等比缩小，永远一行不换行；减 28px 是左右各留 14px 呼吸位。 */
+    width: min(369px, calc(100% - 28px));
+  }
+  /* ★ 选择器必须写成 `.btn.iconBtn`（两个类），不能只写 `.iconBtn`：
+   *   `.btn.ghost` 同样是两个类，特异性一样才轮得到"后定义者胜"；
+   *   单类的 `.iconBtn` 会被 `.btn.ghost { padding:12px 42px; font-size:16px }`
+   *   整个压掉 —— 图标于是胖成 ~110px 一个，430px 手机视口下第一行
+   *   只挤得下 5 个还被右边缘切掉半个（截图踩过）。 */
+  .btn.iconBtn {
+    width: 100%; aspect-ratio: 1; height: auto;
+    min-width: 0; margin-top: 0; border-radius: 17px;
+    font-size: clamp(18px, 4.6vw, 25px); line-height: 1; letter-spacing: 0;
+    display: grid; place-items: center;
+    /* ★ `place-items: center` 居中的是**行盒**，而 emoji 字形在行盒里天然偏上：
+     *   430px 视口实测上留白 12.1 / 下留白 13.9 —— 偏移量是 (13.9-12.1)/2 = 0.9px，
+     *   不是差值 1.8（第一版照着差值调，结果反向偏了 0.9px，探针一量就露馅）。
+     *   grid 在 content box 内居中，所以 padding-top 能把内容整体下压其一半：
+     *   0.09em 恰好补回 0.9px，且随字号等比缩放。
+     *   （全局 `* { box-sizing: border-box }`，所以 padding 不会把正方形撑变形。） */
+    padding: 0.09em 0 0;
+  }
+  /* 支持作者：刻意做小做淡 —— 「开始」之后玩家要么已经在玩、要么在看别的入口，
+   * 它是"想支持再说"的兜底入口，不该和它们抢注意力。
+   * 所以排在整组菜单最末、去掉胶囊底色与投影，只留一行淡色小字。
+   * 选择器用 ID：`.btn` / `.btn.ghost` 的特异性压不住背景和投影，必须 ID 级。 */
+  #supportBtn {
+    margin-top: 4px; padding: 7px 18px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; letter-spacing: 3px;
+    color: var(--ink-dim); background: transparent; box-shadow: none;
+    opacity: .66;
+  }
+  #supportBtn:active {
+    transform: translateY(1px) scale(.99);
+    background: transparent; box-shadow: none;
+  }
+
+  /* ---------------- 暂停面板 ----------------
+   * 和结算页同一套遮罩语言（scrim-over），但盖在局中：底下的 3D 场景要定格
+   * 当背景，所以 HUD（分数/最佳/暂停按钮/蓄力条）在暂停期间整体淡掉 ——
+   * 不然分数会和面板上的"当前分数"叠出一行重影。 */
+  body.paused .hud, body.paused #popLayer { opacity: 0; pointer-events: none; }
+  #pausePanel {
+    position: fixed; inset: 0; z-index: 25;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; text-align: center;
+    background: var(--scrim-over);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    transition: opacity .25s ease;
+  }
+  #pauseHead { font-size: 26px; font-weight: 800; margin: 0 0 2px; color: var(--accent); letter-spacing: 4px; }
+  #pauseMeta { font-size: 14px; color: var(--ink-dim); margin-bottom: 10px; }
+  #pauseMeta b { color: var(--accent); font-variant-numeric: tabular-nums; }
+  #pausePanel .btnRow { margin-top: 0; }
+  #pausePanel .btn { margin-top: 0; }
 
   /* ---------------- 账号 / 排行榜 ---------------- */
-  #accountPanel, #rankPanel {
+  #accountPanel, #rankPanel, #shopPanel, #noticePanel, #supportPanel, #settingsPanel {
     position: fixed; inset: 0; z-index: 30;
     display: flex; flex-direction: column; align-items: center;
     padding-top: max(28px, env(safe-area-inset-top));
@@ -319,7 +538,7 @@ if (location.search.indexOf('dbg') >= 0) {
     backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
     transition: opacity .25s ease;
   }
-  #accountClose, #rankClose {
+  #accountClose, #rankClose, #shopClose, #noticeClose, #supportClose, #settingsClose {
     width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
     background: var(--ghost-bg); border: 1px solid var(--glass-line);
     color: var(--ink); font-size: 15px; display: grid; place-items: center;
@@ -373,6 +592,209 @@ if (location.search.indexOf('dbg') >= 0) {
     padding: 6px 16px; border-radius: 999px;
   }
   #userTag b { color: var(--accent); }
+
+  /* ---------------- 奶币 / 商店 / 公告 ----------------
+   * 奶币徽章钉在开始页顶部居中：局内不显示（结算才变动），标题页一眼看到余额。
+   * 开始页是 flex-end 贴底布局，所以徽章用绝对定位挂到上边。 */
+  #coinTag {
+    position: absolute; top: max(22px, env(safe-area-inset-top)); left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 20px; border-radius: 999px;
+    background: var(--glass); border: 1px solid var(--glass-line);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    font-size: 16px; font-weight: 700; color: var(--accent);
+    font-variant-numeric: tabular-nums; letter-spacing: 1px;
+  }
+  /* 公告按钮上的未读红点 */
+  #noticeBtn { position: relative; }
+  #noticeDot {
+    position: absolute; top: -3px; right: -3px; width: 11px; height: 11px;
+    border-radius: 50%; background: #FF5A5A;
+    box-shadow: 0 0 10px rgba(255, 90, 90, .85);
+    pointer-events: none;
+  }
+  #shopCoins {
+    text-align: center; font-size: 40px; font-weight: 900; color: var(--accent);
+    font-variant-numeric: tabular-nums; margin-bottom: 2px;
+  }
+  #shopShelf { margin-top: 6px; }
+  /* 货架分组标题：商店里"角色""头饰"两栏之间那道小标题 */
+  .shelfHead {
+    font-size: 12px; font-weight: 800; letter-spacing: 3px; color: var(--ink-dim);
+    margin: 12px 2px 6px; opacity: .9;
+  }
+  .shelfHead:first-child { margin-top: 0; }
+  /* 货架条目：缩略图 + 名称/说明 + 购买按钮 */
+  .shopItem {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border-radius: 14px; margin-bottom: 8px;
+    background: var(--row-bg); box-shadow: inset 0 0 0 1px var(--row-line);
+  }
+  .shopItem .shopIco {
+    width: 54px; height: 54px; flex: 0 0 auto; object-fit: contain;
+    background: rgba(128, 128, 128, .10); border-radius: 12px; padding: 3px;
+  }
+  .shopItem .shopMeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .shopItem .shopMeta b { font-size: 15px; color: var(--head-ink); letter-spacing: .5px; }
+  .shopItem .shopMeta span { font-size: 12px; color: var(--ink-dim); line-height: 1.4; }
+  .shopBtn2 {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+    padding: 9px 14px; border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 14px; font-weight: 800; letter-spacing: .5px;
+    color: #4A2E00; background: linear-gradient(180deg, #FFE08A, #F5B93C);
+    border: 1px solid rgba(255, 255, 255, .5);
+    box-shadow: 0 4px 12px rgba(180, 120, 0, .28);
+    transition: transform .14s ease, filter .14s ease;
+  }
+  .shopBtn2:active { transform: scale(.95); }
+  .shopBtn2 .coinIco { width: 17px; height: 17px; vertical-align: 0; }
+  /* 买不起：按钮压暗但仍然可点 —— 点了给一句"奶币不够"，比直接禁用更好懂 */
+  .shopBtn2.dim { filter: grayscale(.55) brightness(.92); opacity: .8; }
+  .shopBtn2.on {
+    color: var(--cell-on-ink); background: var(--cell-on-bg);
+    border-color: var(--cell-on-line); box-shadow: none;
+  }
+  /* 商店里的小提示：贴在面板底部，2 秒自己消失 */
+  #shopToast {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%) translateY(8px);
+    padding: 8px 18px; border-radius: 999px; pointer-events: none;
+    background: rgba(22, 18, 34, .88); color: #FFE7B0;
+    font-size: 14px; font-weight: 700; letter-spacing: .5px;
+    opacity: 0; transition: opacity .2s ease, transform .2s ease;
+  }
+  #shopToast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .noticeItem {
+    padding: 12px 14px; border-radius: 12px; font-size: 14px; line-height: 1.7;
+    background: var(--row-bg); box-shadow: inset 0 0 0 1px var(--row-line);
+    margin-bottom: 8px;
+  }
+  /* 公告条目内部：日期 → 标题 → 正文 → 附赠。
+     日期和正文用弱色，标题用强调色 —— 一眼先看到"这条讲什么"。 */
+  .noticeDate { font-size: 12px; color: var(--ink-dim); letter-spacing: .5px; margin-bottom: 2px; }
+  .noticeTitle { font-size: 16px; font-weight: 800; color: var(--head-ink); letter-spacing: 1px; margin-bottom: 6px; }
+  .noticeBody { font-size: 13.5px; color: var(--ink); line-height: 1.75; white-space: pre-wrap; }
+  /* 附赠行：一枚高亮胶囊，左"🎁 附赠「生日帽」"、右领取按钮 */
+  .noticeGift {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-top: 10px; padding: 7px 8px 7px 12px; border-radius: 11px;
+    background: var(--cell-on-bg); box-shadow: inset 0 0 0 1px var(--cell-on-line);
+    font-size: 13.5px; font-weight: 700; color: var(--cell-on-ink);
+  }
+  .giftBtn {
+    flex: 0 0 auto; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 800; letter-spacing: 1px;
+    color: #4A2E00; background: linear-gradient(180deg, #FFE08A, #F5B93C);
+    border: 1px solid rgba(255, 255, 255, .5);
+    box-shadow: 0 4px 12px rgba(180, 120, 0, .28);
+    transition: transform .14s ease;
+  }
+  .giftBtn:active { transform: scale(.95); }
+  /* 已领取：变哑、不可点 —— 别让它继续勾着玩家去戳 */
+  .giftBtn.got {
+    color: var(--ink-dim); background: transparent; border-color: var(--glass-line);
+    box-shadow: none; cursor: default; opacity: .75;
+  }
+  .giftBtn.got:active { transform: none; }
+
+  /* ---------------- 支持作者 ----------------
+   * 一个菜单页 + 两个子页（联系作者 / 投喂辣条），共用 #supportBody。
+   * 子页左上角一句"← 返回"，正文居中。 */
+  .supportBack {
+    align-self: flex-start; margin-bottom: 4px; padding: 6px 14px; border-radius: 999px;
+    font: inherit; font-size: 12.5px; font-weight: 600; letter-spacing: 1px;
+    color: var(--ink-dim); background: var(--ghost-bg); border: 1px solid var(--glass-line);
+    cursor: pointer;
+  }
+  .supportBack:active { transform: scale(.96); }
+  .supportCard {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 20px 14px; border-radius: 14px; text-align: center;
+    background: var(--row-bg); box-shadow: inset 0 0 0 1px var(--row-line);
+  }
+  /* 邮箱用大号等宽字体：本身就是 mailto 链接，点一下直接开邮件 App */
+  .mailAddr {
+    font-size: 19px; font-weight: 800; letter-spacing: .5px; color: var(--accent);
+    text-decoration: none; word-break: break-all;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  /* 子页里的整宽按钮（复制邮箱 / 两个入口） */
+  .supportBtn2 {
+    width: 100%; padding: 13px 0; border-radius: 12px; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--ink); background: var(--ghost-bg);
+    border: 1px solid var(--glass-line);
+    transition: transform .13s ease, background .13s ease;
+  }
+  .supportBtn2:active { transform: scale(.98); background: var(--cell-bg); }
+  /* 收款码并排：窄屏也不换行，两张等比缩 */
+  /* 单张收款码（2026-10-03 起只有一张）：居中、留白、白底衬边 ——
+   * 码本身自带白底，白衬边让它在浅色面板上也有清晰轮廓 */
+  .qrSolo {
+    display: block; width: min(262px, 82%); height: auto; margin: 2px auto 0;
+    border-radius: 12px; background: #fff; padding: 5px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .22);
+  }
+  /* ---------------- 设置 ----------------
+   * 一行一个开关：左边名字（+ 一行小注），右边胶囊开关。
+   * 开关"开"= 强调色实心 + 圆钮滑到右边，"关"= 灰底 + 圆钮在左 ——
+   * 状态靠位置与颜色双重表达，不写"开/关"两个字也一眼看得出。 */
+  .setRow {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 13px 16px; border-radius: 14px;
+    background: var(--row-bg); box-shadow: inset 0 0 0 1px var(--row-line);
+  }
+  /* ★ 行间距必须在这里给：.acctBody 的 gap 只管它的直接子项，
+   *   #settingsList 是唯一子项、自己不是 flex 的话两行就贴在一起（截图踩过）。 */
+  #settingsList { display: flex; flex-direction: column; gap: 10px; }
+  .setName { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+  .setNote { font-size: 12px; color: var(--ink-dim); margin-top: 3px; line-height: 1.5; }
+  .setSwitch {
+    flex: 0 0 auto; width: 54px; height: 30px; border-radius: 999px;
+    border: 1px solid var(--glass-line); background: var(--ghost-bg);
+    position: relative; cursor: pointer; padding: 0;
+    transition: background .18s ease, border-color .18s ease;
+  }
+  .setSwitch::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--ink-dim); opacity: .55;
+    transition: transform .18s ease, background .18s ease, opacity .18s ease;
+  }
+  .setSwitch.on { background: var(--accent); border-color: var(--accent); }
+  .setSwitch.on::after { transform: translateX(24px); background: #fff; opacity: 1; }
+  /* 连续值行（音量）：名字/小注独占一行，滑条 + 百分比铺在它下面 ——
+     面板宽度只有 min(400px, 88vw)，挤在同一行滑条会短到没法拖。 */
+  .setRow.setRowRange { flex-wrap: wrap; row-gap: 9px; }
+  .setRow.setRowRange > div:first-child { flex: 1 1 100%; }
+  .setRangeWrap { flex: 1 1 100%; display: flex; align-items: center; gap: 12px; min-width: 0; }
+  /* 滑条用原生 input[type=range]：手机上的拖动与点按命中区都是现成的，
+     自绘要么拖不动要么点不准。轨道只留一条细线，圆钮用强调色。 */
+  .setRange {
+    flex: 1; min-width: 0; height: 6px; margin: 0; cursor: pointer;
+    -webkit-appearance: none; appearance: none; border-radius: 999px;
+    background: var(--ghost-bg); box-shadow: inset 0 0 0 1px var(--glass-line);
+    outline: none;
+  }
+  .setRange::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: none;
+    background: linear-gradient(180deg, #FFE08A, #F5B93C);
+    box-shadow: 0 2px 8px rgba(180, 120, 0, .40);
+  }
+  .setRange::-moz-range-thumb {
+    width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: none;
+    background: #F5B93C; box-shadow: 0 2px 8px rgba(180, 120, 0, .40);
+  }
+  .setRangeVal {
+    flex: 0 0 auto; width: 44px; text-align: right;
+    font-size: 13px; color: var(--accent); font-variant-numeric: tabular-nums;
+  }
+  /* 本设备不支持这一项（比如桌面端的震动）：整行压暗、开关禁用，
+     但不隐藏 —— 玩家看得见"有这项、只是这机器没有"，比凭空少一行好解释。 */
+  .setRow.na { opacity: .45; }
+  .setRow.na .setSwitch { pointer-events: none; }
+  #overCoin { color: var(--accent-2); font-weight: 600; letter-spacing: .5px; }
+  #overCoin:empty { display: none; }
 </style>
 </head>
 <body>
@@ -381,25 +803,35 @@ if (location.search.indexOf('dbg') >= 0) {
 <div class="hud">
   <div id="score">0</div>
   <div id="best">0</div>
+  <button id="pauseBtn" class="ui-block hidden" title="暂停（Esc / P）">⏸</button>
   <button id="muteBtn" class="ui-block" title="音效开关">🔊</button>
   <div id="comboTag">完美连击</div>
+  <div id="buffTag"></div>
+  <div id="runCoinTag"></div>
   <div id="barWrap"><div id="barFill"></div></div>
   <div id="hint">按住蓄力 · 松开起跳</div>
 </div>
 <div id="popLayer"></div>
 
 <div id="startScreen">
+  <div id="coinTag"></div>
   <h1 id="gameTitle">奶蛙一跳</h1>
   <button id="startBtn" class="btn ui-block">开 始</button>
-  <div class="btnRow">
-    <button id="charBtn" class="btn ghost ui-block">选 择 角 色</button>
-    <button id="bgBtn" class="btn ghost ui-block">选 择 背 景</button>
-  </div>
-  <div class="btnRow">
-    <button id="accountBtn" class="btn ghost ui-block">设 置 昵 称</button>
-    <button id="rankBtn" class="btn ghost ui-block">排 行 榜</button>
+  <!-- 其余入口收成一行 emoji：只留图标，首页不再被六排按钮占满，
+       3D 角色和砖块才露得出来。title / aria-label 保住可认性。 -->
+  <div class="btnRow emojiRow">
+    <button id="charBtn" class="btn ghost iconBtn ui-block" title="选择角色" aria-label="选择角色">🎭</button>
+    <button id="bgBtn" class="btn ghost iconBtn ui-block" title="选择背景" aria-label="选择背景">🎨</button>
+    <button id="shopBtn" class="btn ghost iconBtn ui-block" title="商店" aria-label="商店">🏪</button>
+    <button id="noticeBtn" class="btn ghost iconBtn ui-block" title="公告" aria-label="公告">📢<i id="noticeDot" class="hidden"></i></button>
+    <button id="accountBtn" class="btn ghost iconBtn ui-block" title="设置昵称" aria-label="设置昵称">🏷️</button>
+    <button id="rankBtn" class="btn ghost iconBtn ui-block" title="排行榜" aria-label="排行榜">🏆</button>
+    <button id="settingsBtn" class="btn ghost iconBtn ui-block" title="设置" aria-label="设置">⚙️</button>
   </div>
   <div id="userTag" class="hidden"></div>
+  <!-- 支持作者放最后、且刻意做小做淡：「开始」之后玩家要么已经在玩、要么在看别的入口，
+       它是"想支持再说"的兜底入口，不该和前两者抢注意力。 -->
+  <button id="supportBtn" class="btn ui-block" title="支持作者" aria-label="支持作者">支 持 作 者</button>
 </div>
 
 <div id="charPanel" class="hidden ui-block">
@@ -407,6 +839,7 @@ if (location.search.indexOf('dbg') >= 0) {
     <h3>选择角色</h3>
     <button id="charClose" class="ui-block" title="关闭">✕</button>
   </div>
+  <div id="accBar"></div>
   <div id="charGrid"></div>
 </div>
 
@@ -442,6 +875,55 @@ if (location.search.indexOf('dbg') >= 0) {
   <div id="rankList"></div>
 </div>
 
+<div id="shopPanel" class="hidden ui-block">
+  <div class="panelHead">
+    <h3>商店</h3>
+    <button id="shopClose" class="ui-block" title="关闭">✕</button>
+  </div>
+  <div class="acctBody">
+    <div id="shopCoins">0</div>
+    <div class="acctHint">砖上偶尔会立着一枚转着的奶币，跳过去捡起来；<br>一局结束时，捡到的每 1 枚 ×10 入账。</div>
+    <div id="shopShelf">
+      <div class="rankEmpty">货架还空着<br>掌柜的正在进货，马上就来</div>
+    </div>
+    <div id="shopToast"></div>
+  </div>
+</div>
+
+<div id="noticePanel" class="hidden ui-block">
+  <div class="panelHead">
+    <h3>公告</h3>
+    <button id="noticeClose" class="ui-block" title="关闭">✕</button>
+  </div>
+  <div class="acctBody">
+    <div id="noticeBody"></div>
+  </div>
+</div>
+
+<!-- 支持作者：入口 → 菜单页 → 两个子页（联系作者 / 投喂辣条）。
+     三个页面的内容全部由 js/game.js 的 renderSupport() 生成 —— 这里只留空容器。 -->
+<div id="supportPanel" class="hidden ui-block">
+  <div class="panelHead">
+    <h3>支持作者</h3>
+    <button id="supportClose" class="ui-block" title="关闭">✕</button>
+  </div>
+  <div class="acctBody">
+    <div id="supportBody"></div>
+  </div>
+</div>
+
+<!-- 设置：都是"本机偏好"（跟账号无关），存在 localStorage。
+     行由 js/game.js 的 SETTINGS 注册表生成 —— 以后加一项只改那个数组。 -->
+<div id="settingsPanel" class="hidden ui-block">
+  <div class="panelHead">
+    <h3>设置</h3>
+    <button id="settingsClose" class="ui-block" title="关闭">✕</button>
+  </div>
+  <div class="acctBody">
+    <div id="settingsList"></div>
+  </div>
+</div>
+
 <div id="overScreen" class="hidden">
   <h2 id="overTitle">游戏结束</h2>
   <div class="overScoreWrap">
@@ -450,9 +932,23 @@ if (location.search.indexOf('dbg') >= 0) {
   </div>
   <div class="overMeta">历史最佳 <b id="overBest">0</b> 分</div>
   <div class="overMeta" id="overPeach"></div>
+  <div class="overMeta" id="overCoin"></div>
   <div id="overRank"></div>
   <div class="btnRow">
     <button id="againBtn" class="btn ui-block">再 来 一 局</button>
+    <button id="titleBtn" class="btn ghost ui-block">返 回 标 题</button>
+  </div>
+</div>
+
+<div id="pausePanel" class="hidden ui-block">
+  <h2 id="pauseHead">已 暂 停</h2>
+  <div id="pauseMeta">当前 <b id="pauseScore">0</b> 分 · 最佳 <b id="pauseBest">0</b> 分</div>
+  <div class="btnRow">
+    <button id="pauseResume" class="btn ui-block">继 续</button>
+  </div>
+  <div class="btnRow">
+    <button id="pauseRestart" class="btn ghost ui-block">重 新 开 始</button>
+    <button id="pauseTitle" class="btn ghost ui-block">返 回 标 题</button>
   </div>
 </div>
 
@@ -474,6 +970,13 @@ if (location.search.indexOf('dbg') >= 0) {
      'https://xxx'  跨域模式 —— 指到独立部署的后端（例如 Worker 直连）
    也可以在网址后面加 ?api=<地址> 临时覆盖，用来把线上那份指到本地测试后端。 */
 window.__API_BASE = 'same';
+
+/* GitHub Pages（*.github.io）是纯静态托管，没有 /api/*，同域模式在那边必 404。
+   好在 worker 的 Origin 白名单里预留了 https://sn2333.github.io，跨域指回去就行 ——
+   后端还是同一套 Cloudflare Pages + D1，只是页面换个地方放。 */
+if (location.hostname.endsWith('.github.io')) {
+  window.__API_BASE = 'https://naiwa-jump.pages.dev';
+}
 
 /* CloudBase 回退：两个值来自开通腾讯云云服务时返回的 publicConfig。
    publishableKey 只标识"是哪个应用"，本身不含权限 —— 服务端按来源域名放行，

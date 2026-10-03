@@ -53,6 +53,36 @@ Pages（`*.pages.dev`）实测畅通。
 
 ---
 
+## 线上现状（已经部署好了）
+
+| 项 | 值 |
+|---|---|
+| 站点 | <https://naiwa-jump.pages.dev/> |
+| Pages 项目 | `naiwa-jump` —— 连着仓库 `Sn2333/naiwa-jump`，推 `main` 自动构建 |
+| D1 库 | `naiwa-board`，绑定名 `DB`，id 在根目录 `wrangler.toml` 里 |
+| 一条命令自检 | `node dev/verify_deploy.mjs https://naiwa-jump.pages.dev --write` |
+
+**两条部署路线，任选：**
+
+1. **推 GitHub（默认）** —— push 到 `main`，Cloudflare 自己构建，几十秒出结果。
+2. **本机直传（GitHub 推不动时用）**：
+
+   ```bash
+   # 发布目录里必须同时有网站文件和 worker/src/ —— functions 会
+   # import 它，缺了会报 Could not resolve "../../worker/src/index.js"
+   CLOUDFLARE_API_TOKEN=xxx npx wrangler pages deploy . \
+     --project-name=naiwa-jump --branch=main --commit-dirty=true
+   ```
+
+   `--branch=main` 才会成为生产部署；不带就会只进 Preview，线上域名看不到。
+
+> ⚠️ **绑定只能写在配置文件里。** 项目连了 Git 仓库之后，Cloudflare 以根目录
+> `wrangler.toml` 为唯一权威来源：控制台里 Settings → Bindings 的「Add」是灰的，
+> **用 API 改项目的 `deployment_configs` 也不生效**（实测过，重新部署后
+> `/api/health` 仍报 `db:false`）。绑定必须写进 `wrangler.toml`。
+
+---
+
 ## 部署步骤
 
 ### 第 1 步：建 D1 数据库
@@ -75,17 +105,39 @@ Pages（`*.pages.dev`）实测畅通。
 
 保存后它立刻开始构建，几十秒出结果。
 
-> ⚠️ 项目名撞车了（之前建过一个叫 `naiwa-jump` 的 Worker）就换一个名字，
-> 然后把域名同步进 `index.html` 里那段注释。
+> ⚠️ **项目名必须和根目录 `wrangler.toml` 里的 `name` 一字不差**（两边都是
+> `naiwa-jump`），否则部署会报 name mismatch。
+>
+> 顺带一提：Cloudflare 把 Workers 和 Pages 放在**同一个命名空间**里，名字不能
+> 重复。所以如果之前建过一个同名的 Worker，得先把它删掉才能建这个 Pages 项目
+> —— 这也是这个项目实际踩到的一步。
 
-### 第 3 步：绑定 D1
+### 第 3 步：绑定 D1（改配置文件，**别去点控制台**）
 
-这个 Pages 项目 → **Settings → Bindings → Add → D1 database**
+> ⚠️ **控制台里那个「Add」是灰的，点不动 —— 这是设计，不是故障。**
+>
+> 这个项目连着 Git 仓库、根目录又有 `wrangler.toml`，Cloudflare 就把配置文件
+> 当成**唯一权威来源**（source of truth）。既然每次部署读的都是配置文件，界面
+> 就不让改绑定了，免得两处配置打架。所以别在界面上找按钮了，直接改文件。
 
-- **Variable name 必须填 `DB`**（代码里用的是 `env.DB`，一字不差）
-- Database 选 `naiwa-board`
+把仓库根目录 `wrangler.toml` 里这三行**取消注释**并填上 id：
 
-存好后要**重新部署一次**才生效：**Deployments → 最新那条 → Retry deployment**。
+```toml
+[[d1_databases]]
+binding = "DB"                      # 必须叫 DB，代码里读的是 env.DB
+database_name = "naiwa-board"
+database_id = "第 1 步建库后拿到的那串 id"
+```
+
+**database_id 在哪拿**：控制台 → **Workers & Pages** → 左侧 **D1**（有的界面在
+**Storage & Databases → D1**）→ 点 `naiwa-board` → 详情页上的 **Database ID**，
+是一串 `8-4-4-4-12` 的十六进制。
+
+改完提交（或网页上传）`wrangler.toml`，Cloudflare 会自动重新构建，绑定时生效 ——
+**不需要**再去点 Retry deployment。
+
+> 反过来也成立：**任何一次「在控制台加绑定」的操作都不会生效**，因为构建时以
+> 配置文件为准。
 
 ### 第 4 步：验证
 

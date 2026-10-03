@@ -27,3 +27,7 @@ __pycache__/
 
 # Node
 node_modules/
+
+# 本轮开发期生成物
+_gen/
+_shots/

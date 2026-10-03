@@ -6,10 +6,12 @@
 
 在线玩：<https://jump3d.app.workbuddy.host>
 
-- 30 只「奶系」角色，全部自由选择，用纸片人 billboard 建模
+- 36 只「奶系」角色（35 只静态纸片人 + 1 只雪碧图动图），用 billboard 建模
 - 25 套纯色 / 渐变背景，默认奶油黄，UI 明暗跟着背景自动翻
 - 不注册、不要密码、不要手机号邮箱：填个昵称就能上榜，昵称和最高成绩存在本机
 - 全服排行榜，展示所有玩家的最好成绩
+- 奶币 + 商店 + 公告赠礼 + 头饰装饰（所有角色通用）
+- 特色砖：脆砖、×2 砖、弹簧、粘液块、冰冰冰、磁铁砖、圣光砖、奶块
 - 单文件离线版：`奶蛙一跳.html` 双击就能玩，不需要联网
 
 <br clear="right">
@@ -22,13 +24,17 @@
 
 ```
 index.html          页面骨架 + 全部样式（主题变量集中在 :root 与 body.tone-light）
-js/game.js          主逻辑：状态机、镜头、输入、计分、各类面板
-js/character.js     纸片人角色：单位方片 + mesh.scale，换角色只换贴图
+js/game.js          主逻辑：状态机、镜头、输入、计分、各类面板、砖块与特效
+js/character.js     纸片人角色：单位方片 + mesh.scale，换角色只换贴图；动图角色手动推帧
+js/acc.js           装饰注册表（分类 / 清单 / 商店上架过滤）
+js/acc_data.js      装饰 + 奶币贴图的 WebP base64（由 dev/build_acc_data.py 生成）
+js/anim_data.js     动图角色（大笑奶蛙）的雪碧图与帧时序（由 dev/extract_laugh.py 生成）
+js/media_data.js    奶块音效 mp3 + 两张收款码的 base64（由 dev/extract_media.py 生成）
 js/theme.js         背景主题表（25 套，含雾色）
 js/api.js           昵称 + 排行榜适配层（同域 / 跨域 / 云服务 / 本地，按优先级自动选）
 js/hit.js           落点判定（圆砖、方块、八棱柱、弹簧砖、迷你砖、移动砖）
-js/audio.js         WebAudio 音效
-js/sprite_data.js   30 角色的 WebP base64（由 dev/extract_chars.py 生成）
+js/audio.js         WebAudio 音效（含 master 音量总线、奶块大笑采样）
+js/sprite_data.js   35 角色的 WebP base64（由 dev/extract_chars.py 生成）
 js/vendor/          three.js r160（本地化，不依赖 CDN）
 functions/api/      Cloudflare Pages Functions 入口（/api/* 桥接到 worker/src/index.js）
 worker/             排行榜后端真源 + D1 表结构留档（部署说明见 worker/README.md）
@@ -36,9 +42,9 @@ wrangler.toml       Cloudflare Pages 部署配置（pages_build_output_dir = "."
 dev/                开发脚本（打包、抠图、无头截图、探针、回归测试）
 ```
 
-`assets/chars/`（30 只角色的原始立绘，60 个 PNG/WebP）**不在仓库里** —— 版权归各原作者、
-体积也有 4MB。缺了它们只是跑不了 `dev/extract_chars.py`；玩游戏、打包单文件版、
-跑回归测试都不受影响，因为成品已经内联在 `js/sprite_data.js` 里了。
+`assets/chars/`（角色原始立绘）**不在仓库里** —— 版权归各原作者、体积也有 4MB。
+缺了它们只是跑不了 `dev/extract_chars.py`；玩游戏、打包单文件版、跑回归测试都不受影响，
+因为成品已经内联在 `js/sprite_data.js` / `js/anim_data.js` / `js/acc_data.js` 里了。
 
 ## 开发
 
@@ -68,8 +74,13 @@ PROBE=rank node dev/probe.mjs "http://127.0.0.1:8899/index.html" /tmp/c.png
 # 不传 Worker 地址时会从站点 HTML 里自己解析；默认只读，加 --write 才写入
 node dev/verify_deploy.mjs "https://sn2333.github.io/naiwa-jump/" --write
 
-# 从原始立绘重新抠出 30 个角色
-python dev/extract_chars.py
+# 从原始立绘重新抠出角色贴图 / 生成动图角色 / 内联音效与收款码
+python dev/extract_chars.py      # 静态纸片人 → js/sprite_data.js
+python dev/extract_laugh.py      # 大笑奶蛙.gif → js/anim_data.js（雪碧图 + 帧时序）
+python dev/extract_media.py      # 奶龙大笑 mp3 + 两张收款码 → js/media_data.js
+python dev/extract_acc.py        # 单件装饰 → assets/acc/<id>_256.webp
+python dev/build_acc_data.py     # 装饰 + 奶币贴图 → js/acc_data.js
+python dev/extract_naiwa_coin.py # 奶币三视图 → 单枚抠图（投影法定位）
 ```
 
 **为什么一定要跑 `check.sh` 里的「module 形态实测」**：单文件打包版会把所有模块塞进
@@ -91,6 +102,10 @@ module 形态一加载就 `ReferenceError`，整个游戏白屏。所以「打�
 | `bg=<key>` `bgpanel` | 换背景 / 掀开背景面板 |
 | `account` `nick=<名字>` | 掀开昵称面板 / 直接保存昵称（截图与线上验证用） |
 | `rank` `seedrank=<n>` | 掀开排行榜 / 往本地榜单塞假数据 |
+| `shop` `notice` `settings` `support=mail\|pay` | 分别掀开商店 / 公告 / 设置 / 支持作者（后两者带子页） |
+| `coin=<n>` `coins=1` | 直接给余额 / 让每块砖都挂币（抽签固定住，跑可复现的拾取用例） |
+| `seenotice` | 先标成"公告已读"，免得它中途弹出来打断别的用例 |
+| `acc=<id>` `buyacc=<id>` `ownchar=<key>` | 直接戴上某件装饰 / 直接拥有它 / 直接拥有某只收费角色（都不装备） |
 | `api=<地址>` | 把排行榜后端指到别的地址（本地回归、排查线上问题用） |
 
 ## 后端
@@ -120,6 +135,14 @@ module 形态一加载就 `ReferenceError`，整个游戏白屏。所以「打�
 在国内整段打不开（DNS 被解析成假 IP，TLS 握手也被挡），玩家根本访问不到。
 而同一家 Cloudflare 的 `*.pages.dev` 实测畅通。两者底层是同一套运行时，
 所以换过来只是多了一层入口，业务代码一个字没改。
+
+**线上地址：<https://naiwa-jump.pages.dev/>** —— 网页和 `/api/*` 都在这个域名下，
+国内实测直连可用（`*.workers.dev` 不行，见下）。
+
+**D1 绑定写在 `wrangler.toml` 里，不要在控制台点。** 这个项目连了 Git 仓库、根目录又有
+配置文件，Cloudflare 就以配置文件为唯一权威来源 —— 控制台里 Settings → Bindings 的
+「Add」直接是灰的。所以那三行 `[[d1_databases]]` 必须一直留在仓库根目录的
+`wrangler.toml` 里；**把它删掉再 push，构建出来的部署就没有绑定，排行榜会退化成 503。**
 
 部署步骤见 [`worker/README.md`](worker/README.md)。
 

@@ -163,8 +163,8 @@ async function handleHealth(env, cors) {
       ok: false,
       db: false,
       msg: 'Worker 正常，但没有绑定 D1 数据库：'
-        + '进入这个 Worker 的 Settings → Bindings → Add binding → D1 database，'
-        + '变量名填 DB、选择 naiwa-board，保存后再 Deploy 一次。',
+        + '把仓库根目录 wrangler.toml 里的 [[d1_databases]] 三行取消注释、填上 database_id 再部署。'
+        + '注意控制台里 Settings → Bindings 的「Add」是灰的 —— 项目连着仓库时以配置文件为准，界面不让改。',
     }, 503, cors);
   }
   try {

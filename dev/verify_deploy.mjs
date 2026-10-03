@@ -94,6 +94,12 @@ if (siteHtml) {
       '站点已接入后端',
       'window.__API_BASE 是空的 → 站点会退回本地模式，榜单只统计本机（这正是「排行榜没生效」的典型原因）'
     );
+  } else if (m[1] === 'same') {
+    // 同域模式：网页和后端在同一个域名下（Cloudflare Pages 就是这么部署的）。
+    // 后端地址就是站点自己的源，不用另配 —— 但得从站点地址推出来。
+    ok('站点已接入后端', 'window.__API_BASE = same（同域：网页与 /api 同一个域名）');
+    if (!apiBase && siteOrigin) apiBase = siteOrigin;
+    else if (!apiBase) bad('站点已接入后端', '同域模式要求站点地址是 http(s)，才能推出后端地址');
   } else {
     ok('站点已接入后端', `window.__API_BASE = ${m[1]}`);
     if (!apiBase) apiBase = m[1];
@@ -136,7 +142,8 @@ try {
     bad(
       'Worker 绑定的 D1',
       `Worker 起来了但数据库不可用：${data.msg || '未说明'}。` +
-      '去 Cloudflare → 这个 Worker → Settings → Bindings 加一条 D1，变量名必须是 DB'
+      '绑定要写在仓库根目录 wrangler.toml 的 [[d1_databases]] 里（变量名必须是 DB）；' +
+      '控制台那个 Add 按钮是灰的，因为连了仓库后以配置文件为准'
     );
   } else {
     bad('Worker 存活', `HTTP ${res.status}: ${text.slice(0, 120)}`);

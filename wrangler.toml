@@ -17,16 +17,15 @@
 #
 # Cloudflare 控制台 → Workers & Pages → Create → Pages → Connect to Git
 #   · 选仓库   Sn2333/naiwa-jump
-#   · 项目名   保持 naiwa-jump（决定最终域名 naiwa-jump.pages.dev）
+#   · 项目名   naiwa-jump（决定最终域名 naiwa-jump.pages.dev）
 #   · 生产分支 main
 #   · 构建配置 不用填 —— 下面的 pages_build_output_dir 会被自动读取
 # 保存后它自己就开始构建，几十秒出结果。
 #
-# ⚠️ 如果项目名撞车（之前建过一个叫 naiwa-jump 的 Worker），换一个名字即可，
-#    然后把新域名同步进 index.html 里那段注释。
+# ⚠️ 控制台里填的项目名必须和下面的 name 一字不差，否则报 name mismatch。
 #
-# ⚠️ 之前那个 Worker 项目已经没用了，建议删掉 —— 否则它每次构建都会失败，
-#    然后给你发一封没用的失败通知邮件。
+# ⚠️ Cloudflare 把 Workers 和 Pages 放在**同一个命名空间**里，名字不能重复。
+#    所以想用 naiwa-jump 这个名字，得先确认没有同名的 Worker 占着。
 # ───────────────────────────────────────────────────────────────────
 
 name = "naiwa-jump"
@@ -43,16 +42,31 @@ pages_build_output_dir = "."
 # ───────────────────────────────────────────────────────────────────
 # D1 数据库绑定
 #
-# Pages 的绑定**在控制台里配**，不写在这里：
-#   这个 Pages 项目 → Settings → Functions → D1 database bindings
-#   → Add binding：变量名必须填 DB（代码里用的是 env.DB），库选 naiwa-board。
-#   加完要重新部署一次才会生效（Deployments → 最新那条 → Retry deployment）。
+# ⚠️ **必须写在这里，去控制台点是没有用的。**
 #
-# naiwa-board 还没建的话：
-#   Storage & Databases → D1 → Create database，名字填 naiwa-board。
-#   表结构不用管 —— 后端第一次收到请求时会自己建（worker/src/index.js 里的
-#   ensureSchema），worker/schema.sql 只是同一份结构的留档。
+# 这个项目连着 Git 仓库、又有这份配置文件，Cloudflare 就把配置文件当成唯一
+# 权威来源（source of truth）。结果是控制台里 Settings → Bindings 的「Add」
+# 按钮直接变灰、点不动 —— 不是权限不够，是设计如此：既然每次部署读的都是
+# 配置文件，界面就不让改绑定，免得两处配置打架。
 #
-# 绑定好之后，一条命令就能验通没通：
+# 所以拿到 Database ID 后，把下面三行取消注释、填上真值，提交（或网页上传）
+# 这份文件，Cloudflare 会自动重新构建，绑定时就生效了。
+#
+# database_id 在哪拿：
+#   控制台 → Workers & Pages → 左侧 D1（有的界面在 Storage & Databases → D1）
+#   → 点 naiwa-board → 详情页上的 Database ID，一串 8-4-4-4-12 的十六进制。
+#
+# naiwa-board 还没建就先建：D1 → Create database，名字填 naiwa-board。
+# 表结构不用管 —— 后端第一次收到请求时会自己建（worker/src/index.js 里的
+# ensureSchema），worker/schema.sql 只是同一份结构的留档。
+#
+# 没拿到 id 之前这段保持注释：Worker 照样起得来，只是 /api/health 会返回
+# 503 并写清楚「没有绑定 D1」，卡在哪一步一眼能看出来。
+#
+# 绑好之后一条命令验通没通：
 #   node dev/verify_deploy.mjs https://naiwa-jump.pages.dev --write
 # ───────────────────────────────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "naiwa-board"
+database_id = "0b8c5a5a-0069-4488-af43-178261e0d9be"

@@ -169,8 +169,12 @@ const main = async () => {
   await cdp.send('Log.enable', {}, S);
   await cdp.send('Page.enable', {}, S);
   await cdp.send('Network.enable', {}, S);
+  /* 视口默认 460×880（奶蛙一跳的目标机型）。验窄屏布局用 PROBE_W / PROBE_H
+   * 覆盖 —— 首页那排 emoji 图标钮就是靠 PROBE_W=360 量出来"第 6 个顶出屏幕"的，
+   * 光看 460 一直是对的。 */
   await cdp.send('Emulation.setDeviceMetricsOverride', {
-    width: 460, height: 880, deviceScaleFactor: 1, mobile: false,
+    width: Number(process.env.PROBE_W || 460), height: Number(process.env.PROBE_H || 880),
+    deviceScaleFactor: 1, mobile: false,
   }, S);
 
   /* 页面里没有 window.__DBG_Q 时 game.js 会退回 location.search，
@@ -239,7 +243,7 @@ const main = async () => {
       chars: g && g.dom && g.dom.charGrid ? g.dom.charGrid.children.length : null,
       canvas: c ? c.width + 'x' + c.height : null,
       gl: px,
-      panels: ['startScreen','charPanel','bgPanel','accountPanel','rankPanel','overScreen']
+      panels: ['startScreen','charPanel','bgPanel','accountPanel','rankPanel','overScreen','pausePanel']
         .map((id) => {
           const el = document.getElementById(id);
           return id + '=' + (el ? (el.classList.contains('hidden') ? 'hidden' : 'shown') : 'missing');

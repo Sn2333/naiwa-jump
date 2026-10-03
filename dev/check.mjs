@@ -99,6 +99,59 @@ console.log('== 0) 跨模块依赖检查 ==');
   if (!missing) console.log('  ✓ 没有跨模块的漏 import');
 }
 
+console.log('\n== 0.5) DOM id 一致性 ==');
+/* 踩过的坑：pauseTitle 同时用在了标题 <h2> 和「返回标题」按钮上。
+ * getElementById 只认第一个，于是按钮的 click 监听挂在了 h2 上 ——
+ * 单文件打包版照样能跑（语法没错），只有点按钮没反应这一个症状。
+ * 这类"引用了不存在的 id / id 重复"必须静态拦下来。 */
+{
+  const html = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const defined = new Map();                       // id -> 出现次数
+  for (const m of html.matchAll(/\bid="([^"]+)"/g)) {
+    defined.set(m[1], (defined.get(m[1]) || 0) + 1);
+  }
+  const dup = [...defined.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+  if (dup.length) bad(`  ✗ index.html 里重复的 id：${dup.join(', ')}`);
+  else console.log('  ✓ index.html 没有 id 重复');
+
+  const refs = new Map();                          // id -> ['js/game.js:12', ...]
+  for (const f of readdirSync(JS).filter((x) => x.endsWith('.js'))) {
+    if (f === 'vendor' || f === 'sprite_data.js') continue;
+    const src = readFileSync(path.join(JS, f), 'utf8');
+    for (const m of src.matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      if (!refs.has(m[1])) refs.set(m[1], []);
+      refs.get(m[1]).push(`js/${f}`);
+    }
+  }
+  /* 探针也会去 getElementById 面板 id，一起纳入检查范围 */
+  for (const f of readdirSync(path.join(ROOT, 'dev')).filter((x) => x.endsWith('.js'))) {
+    const src = readFileSync(path.join(ROOT, 'dev', f), 'utf8');
+    for (const m of src.matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+      if (!refs.has(m[1])) refs.set(m[1], []);
+      refs.get(m[1]).push(`dev/${f}`);
+    }
+  }
+  const ghost = [...refs.keys()].filter((id) => !defined.has(id));
+  if (ghost.length) bad(`  ✗ 代码里 getElementById 引用了 index.html 里不存在的 id：${ghost.join(', ')}`);
+  else console.log(`  ✓ 引用的 ${refs.size} 个 id 在 index.html 里都存在`);
+}
+
+console.log('\n== 0.6) sprite_data 碰撞字段 ==');
+/* 碰撞体积由实际建模定义：每个角色必须带 foot（脚底接触半宽/贴图宽，0~0.5）。
+ * 这个字段由 extract_chars.py 量出来 —— 哪次重抠/重生成漏了它，游戏会静默
+ * 退回经验默认值，所有角色又变回同一个底盘，等于白做。 */
+{
+  const src = readFileSync(path.join(JS, 'sprite_data.js'), 'utf8');
+  const nChars = (src.match(/"key":"/g) || []).length;
+  const nFoot = (src.match(/"foot":/g) || []).length;
+  const footVals = [...src.matchAll(/"foot":([0-9.]+)/g)].map((m) => Number(m[1]));
+  const outOfRange = footVals.filter((v) => !(v > 0 && v <= 0.5));
+  if (nChars === 0) bad('  ✗ sprite_data.js 里没有角色数据');
+  else if (nFoot !== nChars) bad(`  ✗ ${nChars} 个角色里只有 ${nFoot} 个带 foot 字段（跑 dev/extract_chars.py --feet 补量）`);
+  else if (outOfRange.length) bad(`  ✗ foot 字段越界（应在 0~0.5）：${outOfRange.join(', ')}`);
+  else console.log(`  ✓ ${nChars} 个角色都带 foot 碰撞字段（${Math.min(...footVals).toFixed(2)} ~ ${Math.max(...footVals).toFixed(2)}）`);
+}
+
 console.log('\n== 1) 单文件语法检查（剥掉 import/export 后） ==');
 const files = readdirSync(JS).filter((f) => f.endsWith('.js') && f !== 'sprite_data.js');
 for (const f of files) {

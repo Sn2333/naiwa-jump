@@ -34,6 +34,83 @@ PAD = 8                 # 裁切留边
 MIN_KEEP = 0.035        # 连通域面积占比下限（过滤水印、星点）
 WEBP_Q = 88
 
+# ---- 脚底接触面（碰撞体积）测量 ----
+# 落脚判定要求"碰撞体积由实际建模定义"：每个角色真正踩在地上的那一圈有多宽，
+# 从剪影里量出来，写进 sprite_data 的 foot 字段（半宽占贴图宽的比例，0~0.5）。
+# 贴图在 mesh 里以几何中心对齐 charRoot，所以从图像水平中心量 |dx| 即可。
+FOOT_BAND = 0.13        # 接触带高度（占贴图高的比例）。取值是折中：
+                        #  · 奶羊是趴姿，肚皮（真支撑）底沿在 6% 上下 —— 带太窄只扫到
+                        #    垂得最低的前蹄，把"整条肚皮着地"量成"一只蹄着地"；
+                        #  · 奶虎抬起的脚底沿在 13%~20% 之间 —— 带再宽就把悬空的脚
+                        #    也当支撑（奶天秤的秤盘本来就垂到近地，收进来反而是对的）。
+FOOT_ALPHA = 96         # 判"实心"的 alpha 门槛（避开羽化边缘）
+FOOT_FALLBACK = 0.15    # 接触带里找不到实心像素时的兜底（悬空造型的角色）
+
+
+def measure_foot(im, baseline):
+    """脚底接触半宽 / 贴图宽。
+
+    只扫 baseline 上方 FOOT_BAND 这一条带 —— 再高就会扫到裙摆、钳子这类
+    悬空部件（奶天秤的秤盘在带高 0.12 时被扫进来，半宽虚大一倍）。
+    返回的是"比例"而不是世界单位：世界半径 = 贴图宽的世界尺寸 × 本值，
+    由 character.js 在 applyDef 里算，这样换角色缩放后依然成立。"""
+    w, h = im.size
+    a = np.asarray(im)[..., 3]
+    base_row = min(int(round(baseline * h)), h - 1)
+    top = max(0, int(round(base_row - FOOT_BAND * h)))
+    xs = np.nonzero((a[top:base_row + 1] > FOOT_ALPHA).any(axis=0))[0]
+    if xs.size == 0:
+        return FOOT_FALLBACK
+    return float(max(abs(xs - w / 2.0).max() / w, 0.0))
+
+# ---- 小红书水印的"就地抹平" ----
+# 后加的这几张（奶绷 / 大奶 / 格斗准备奶蛙 / 奶豪）水印是**压在角色身上**的，
+# 不再像前一批那样孤零零贴在角上 —— 于是 drop_edge_specks / strictSat 那套
+# "当零碎前景剔掉"的招数全失效（水印和角色连成一块，一剔就是半个身子）。
+# 水印只有两种像素：半透明的白字，和那枚浅色小徽标。两者都比**局部背景**亮，
+# 所以拿大核中值当"局部背景"，把明显更亮的那撮替换回去就行 —— 相当于一次
+# 只作用于水印框的简易 inpaint。角色本体的高光也可能超过阈值，所以额外要求
+# "比局部背景更亮"（水印永远在"更亮"那一侧，剪影边缘不是）。
+WM_BOX = (0.70, 0.85, 1.0, 1.0)   # 归一化 (x0, y0, x1, y1)。水印总在右下角
+WM_K = 71                          # 局部背景的中值核。必须**大于徽标本身**，
+                                   # 否则徽标内部的窗口全是徽标色，中值 = 徽标，
+                                   # 差值算出来是 0，整枚徽标活下来。
+                                   # 徽标实测 73×22（小红书那枚小圆角牌），窗口里
+                                   # 徽标像素占比 = 22/k；要让它当"少数派"（<50%），
+                                   # k 得大于 44。第一版给 41，刚好踩在线上（54%），
+                                   # 文字抹掉了、底板却残留一小片，所以抬到 71（31%）。
+WM_DIFF = 30                       # 与局部背景的通道差达到这个值才判成水印
+WM_BRIGHT = 10                     # 还要"比局部背景亮这么多"才动手
+# 哪些角色要过这道工序。前面那 30 张的水印都乖乖待在角色外面，靠连通域过滤
+# 就够了，跑一遍反而有可能把角色的高光误抹；所以只对**水印压在角色身上**的这几张开。
+WM_KEYS = {"beng", "bigmilk", "fight", "hao"}
+
+
+def inpaint_watermark(img, box=WM_BOX, k=WM_K, diff=WM_DIFF):
+    """把右下角水印就地抹平（原地修改 img）。"""
+    H, W, _ = img.shape
+    x0, y0, x1, y1 = (int(box[0] * W), int(box[1] * H), int(box[2] * W), int(box[3] * H))
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(W, x1), min(H, y1)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return
+    # 中值在整幅图上算的话要跑 200 万像素 × 1681 窗口，太慢；
+    # 只在水印框外扩一个核的范围内算，边界用 nearest 撑住。
+    ys, xs = max(0, y0 - k), max(0, x0 - k)
+    ye, xe = min(H, y1 + k), min(W, x1 + k)
+    big = np.ascontiguousarray(img[ys:ye, xs:xe])
+    med = ndimage.median_filter(big, size=(k, k, 1), mode='nearest')
+    # 裁回水印框
+    oy, ox = y0 - ys, x0 - xs
+    med = med[oy:oy + (y1 - y0), ox:ox + (x1 - x0)]
+    sub = img[y0:y1, x0:x1]
+    d = np.abs(sub - med).max(axis=2)
+    brighter = sub.min(axis=2) > med.min(axis=2) + WM_BRIGHT
+    m = (d > diff) & brighter
+    m = ndimage.binary_dilation(m, np.ones((3, 3), bool), iterations=2)
+    img[y0:y1, x0:x1] = np.where(m[..., None], med, sub)
+
+
 # 顺序沿用用户给的清单；经典奶蛙是初始角色
 CHARS = [
     ("poop", "奶屎", "奶屎.jpg"),
@@ -66,6 +143,11 @@ CHARS = [
     ("rabbit", "奶兔", "奶兔.jpg"),
     ("egg", "奶蛋", "奶蛋.jpg"),
     ("frog", "经典奶蛙", "经典奶蛙.webp"),
+    ("angry2", "奶怒2", "奶怒2.jpg"),
+    ("beng", "奶绷", "奶绷.jpg"),
+    ("bigmilk", "大奶", "大奶.jpg"),
+    ("hao", "奶豪", "奶豪.jpg"),
+    ("fight", "格斗准备奶蛙", "格斗准备奶蛙.jpg"),
 ]
 DEFAULT_CHAR = "frog"
 
@@ -92,6 +174,30 @@ OVERRIDE = {
     # 剩下贴着蛋底的那圈接触阴影色差是连续的：从蛋体的深棕 sat 0.70 一路滑到
     # 阴影的暖灰 sat 0.19，任何全局阈值都会要么留脏、要么啃掉蛋底。交给 trimShadow。
     "egg": {"strictSat": True, "minSat": 0.18, "trimShadow": (0.045, 0.36)},
+
+    # ---- 后加的五张：背景不是干净的棚拍，逐张换判据 ----
+    #
+    # 奶怒2：背景是虚化的树叶 + 天空，四角分别是深橄榄、亮蓝、暖橙三种颜色，
+    # 连 estimate_bg（取四角 + 边中点的中位数）都估不出一个像样的背景色。
+    # 但角色是"红烊的"（R 恒大于 G：红头 R-G≈140、黄身 R-G≈45），
+    # 树叶与天空则一律 G ≥ R —— 直接用"红度"这一个维度就切干净了。
+    "angry2": {"warm": {"rb": 20, "rg": 15}},
+    # 奶绷：墙是浅暖灰 (210,203,187)，R-B 只有 23，跟奶油肚皮的 87 差得远；
+    # 但左下角有把绿椅子，是深橄榄色 (71,73,10)，R-B 竟有 61。
+    # 光靠 R-B 会把椅子一起收进来，所以补一道 R-G：椅子 G ≈ R（-2），
+    # 蛙身 R 远大于 G（黄 R-G≈80、奶油肚 R-G≈40）。两道一起卡，椅子就掉了。
+    "beng": {"warm": {"rb": 45, "rg": 15}},
+    # 大奶 / 格斗准备奶蛙：都是干净的白底棚拍，背景中性（R-B≈0~3）。
+    # 不用 estimate_bg + Otsu 那套，是因为角色身上有大片**接近中性**的浅黄高光
+    # （头顶那圈 R-G 只有 5 上下），Otsu 的阈值一压就把它啃掉 —— 第一版把大奶的
+    # 头顶啃出一排锯口。改成只看 R-B：背景 0~3、蛙身 40 起步，中间空得很。
+    "bigmilk": {"warm": {"rb": 20}},
+    "fight": {"warm": {"rb": 20}},
+    # 奶豪：黑卫衣 + 白底 + 白 W 印花。白 W 和白底同色，色差法必然把它当背景，
+    # 但它被卫衣整个包住 → 是个"孔"，后面的 fill_holes 会填回来（实测有效）。
+    # 所以这里只需要"有颜色、或者非常暗"：卫衣黑（mx≈2）走暗那支，
+    # 黄脸 / 绿眼走饱和那支，白底与白 W 两支都不沾 —— 让 W 当孔再填。
+    "hao": {"strictSat": True, "minSat": 0.12, "darkOrColor": True},
 }
 
 
@@ -188,13 +294,28 @@ def cutout(path, key):
     img = np.asarray(Image.open(path).convert("RGB")).astype(np.float32)
     H, W, _ = img.shape
 
+    ov = OVERRIDE.get(key, {})
+
+    # 水印先抹平，再算一切。顺序不能反：水印压在身上时会被当成"角色的一部分"，
+    # 后面的连通域过滤、Otsu 阈值都会把它算进去。
+    if ov.get("watermark", True) and key in WM_KEYS:
+        inpaint_watermark(img, ov.get("wmBox", WM_BOX))
+
     bg = estimate_bg(img)
     d = np.abs(img - bg).max(axis=2)
 
-    ov = OVERRIDE.get(key, {})
     t = ov.get("tol", int(np.clip(otsu(d.reshape(-1)), 14, 72)))
 
-    m = d > t
+    if ov.get("warm"):
+        # 整套"与背景色差"逻辑都绕开：背景太花（虚化树叶）或背景与角色亮度太近
+        # （白底 + 浅黄高光），只有颜色倾向这一个维度是可靠的。
+        w = ov["warm"]
+        m = (img[..., 0] - img[..., 2]) > w["rb"]
+        if "rg" in w:
+            m &= (img[..., 0] - img[..., 1]) > w["rg"]
+    else:
+        m = d > t
+
     m = ndimage.binary_opening(m, np.ones((3, 3), bool))
 
     if ov.get("warmOnly"):
@@ -204,14 +325,21 @@ def cutout(path, key):
         # 银白小鱼 R-B≈0）。所以这里直接换成暖色判据。
         m &= (img[..., 0] - img[..., 2]) > -6.0
 
-    if ov.get("strictSat"):
+    if ov.get("darkOrColor"):
+        # "有颜色"或者"够暗"。奶豪的白 W 印花与白底同色，两支都不沾 →
+        # 它成了卫衣里的一个孔，交给后面的 fill_holes 填回来。
+        mx = img.max(axis=2)
+        mn = img.min(axis=2)
+        sat = (mx - mn) / np.maximum(mx, 1.0)
+        m &= (sat > ov.get("minSat", 0.10)) | (mx < 115.0)
+    elif ov.get("strictSat"):
         # 只要"有颜色"。经典奶蛙脚边有一大片深灰台面、奶蛋脚下有浅灰台面
         # 加两处水印，它们虽然"和背景不一样"但几乎没有色彩，用严格判据一刀切掉。
         mx = img.max(axis=2)
         mn = img.min(axis=2)
         sat = (mx - mn) / np.maximum(mx, 1.0)
         m &= sat > ov.get("minSat", 0.10)
-    elif not ov.get("noSat"):
+    elif not ov.get("noSat") and not ov.get("warm"):
         # 补一道"必须像角色"的约束：前景要么有颜色（黄系角色的饱和度很高），
         # 要么明显比背景暗（角色的深色手脚、尾尖）。纯靠色差 d 会误收两类东西：
         # 背景渐变（白底图下半截偏灰，d 直接顶到阈值）和脚下的台面/投影。
@@ -295,15 +423,43 @@ def cutout(path, key):
         "h": im.height,
         "aspect": round(im.width / im.height, 5),
         "baseline": round(float(min(baseline, 1.0)), 5),
+        "foot": round(measure_foot(im, min(baseline, 1.0)), 4),
     }
     return im, meta, dict(bg=[round(v, 1) for v in bg.tolist()], tol=t, otsu=otsu(d.reshape(-1)),
                           dropped=dropped, cover=round(float((alpha > 0.5).mean()) * 100, 1))
+
+
+def write_sprite_data(cache):
+    """按 CHARS 顺序把已有贴图全部内嵌，生成 sprite_data.js（--feet 与全量共用）"""
+    body = []
+    for key, name, _ in CHARS:
+        e = cache.get(key)
+        if not e:
+            continue
+        webp = OUT_DIR / (key + ".webp")
+        if not webp.exists():
+            continue
+        raw = webp.read_bytes()
+        item = dict(e, uri="data:image/webp;base64," + base64.b64encode(raw).decode("ascii"))
+        body.append("\n  " + json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+    js = (
+        "/* 自动生成，勿手改：由 dev/extract_chars.py 抠图并内嵌。\n"
+        " * 每项含贴图 data URI、脚底基准线 baseline 与脚底接触半宽 foot\n"
+        " * （都是 0~1 的贴图内归一化值；foot 是落脚判定的碰撞依据）。*/\n"
+        "export const CHARS = [" + ",".join(body) + "\n];\n"
+        "export const DEFAULT_CHAR = " + json.dumps(DEFAULT_CHAR) + ";\n"
+    )
+    OUT_JS.write_text(js, encoding="utf-8")
+    print("\n共 %d 个角色 -> %s (%.0f KB)" % (len(body), OUT_JS.name, OUT_JS.stat().st_size / 1024))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sheet", action="store_true")
     ap.add_argument("--only", default="")
+    ap.add_argument("--feet", action="store_true",
+                    help="跳过抠图：只从现有 assets/chars/*.png 量脚底接触半宽，"
+                         "回写 chars_meta.json 与 sprite_data.js（源头图不在也能跑）")
     args = ap.parse_args()
 
     only = set(x for x in args.only.split(",") if x)
@@ -317,6 +473,25 @@ def main():
     if META_JSON.exists():
         for e in json.loads(META_JSON.read_text(encoding="utf-8")):
             cache[e["key"]] = e
+
+    if args.feet:
+        tiles = []
+        for key, name, _ in CHARS:
+            e = cache.get(key)
+            png = OUT_DIR / (key + ".png")
+            if not e or not png.exists():
+                print("跳过 %s（无元数据或无 PNG）" % key)
+                continue
+            im = Image.open(png)
+            e["foot"] = round(measure_foot(im, e["baseline"]), 4)
+            tiles.append((key, im))
+            print("%-12s %-6s foot=%.4f（世界半径 ≈ %.2f）"
+                  % (key, name, e["foot"], 1.62 * min(e["aspect"], 1.0) * e["foot"]))
+        META_JSON.write_text(
+            json.dumps([cache[k] for k, _, _ in CHARS if k in cache], ensure_ascii=False, indent=1),
+            encoding="utf-8")
+        write_sprite_data(cache)
+        return 0
 
     tiles = []
     for key, name, fn in CHARS:
@@ -353,26 +528,8 @@ def main():
         json.dumps([cache[k] for k, _, _ in CHARS if k in cache], ensure_ascii=False, indent=1),
         encoding="utf-8")
 
-    # 写 sprite_data.js：按 CHARS 的顺序，把已有的贴图全部内嵌
-    body = []
-    for key, name, _ in CHARS:
-        e = cache.get(key)
-        if not e:
-            continue
-        webp = OUT_DIR / (key + ".webp")
-        if not webp.exists():
-            continue
-        raw = webp.read_bytes()
-        item = dict(e, uri="data:image/webp;base64," + base64.b64encode(raw).decode("ascii"))
-        body.append("\n  " + json.dumps(item, ensure_ascii=False, separators=(",", ":")))
-    js = (
-        "/* 自动生成，勿手改：由 dev/extract_chars.py 抠图并内嵌。\n"
-        " * 每项含贴图 data URI 与脚底基准线 baseline（0~1，贴图内的归一化位置）。*/\n"
-        "export const CHARS = [" + ",".join(body) + "\n];\n"
-        "export const DEFAULT_CHAR = " + json.dumps(DEFAULT_CHAR) + ";\n"
-    )
-    OUT_JS.write_text(js, encoding="utf-8")
-    print("\n共 %d 个角色 -> %s (%.0f KB)" % (len(body), OUT_JS.name, OUT_JS.stat().st_size / 1024))
+    write_sprite_data(cache)
+    return 0
 
 
 if __name__ == "__main__":
