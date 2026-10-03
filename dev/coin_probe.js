@@ -267,10 +267,14 @@ const distBoosted = Math.hypot(g.jump.to.x - g.jump.from.x, g.jump.to.z - g.jump
 g.state = 'ready';
 
 /* 7a2) 助推的生命周期：落在普通砖 → 归零；落在弹簧砖 → 保持。
- *   直接把目标砖的 trait 改掉再 finishJump，比等抽签稳定得多。 */
+ *   直接把目标砖的 trait 改掉再 finishJump，比等抽签稳定得多。
+ *   7a3 还要量"弹簧的下一块间距"，所以这里临时解锁随机间距 ——
+ *   URL 的 ?gap= 是固定调试间距，生成器对它刻意不干预，不解锁测不到真实行为。 */
 g.setBoost(false);
+const savedGap7a = g.fixedGap;
 g.backToTitle();
 await sleep(150);
+g.fixedGap = null;
 g.beginRun();
 await sleep(200);
 const bp = g.next;
@@ -290,6 +294,12 @@ g.state = 'jumping';
 g.finishJump();
 const boostOnSpring = g.boostLv;              // 必须是 1（站在弹簧上）
 g.setBoost(false);
+/* 7a3) 弹簧的下一块**不能太近**：站弹簧上最轻一跳也飞 minReach×1.92 远，
+ *   生成器必须把间距下限抬到轻跳也飞不过头的位置，否则满射程必跳过 —— 物理无解 */
+const springGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
+const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.30;
+const springGapOk = springGap >= springGapLo - 1e-6;
+g.fixedGap = savedGap7a;
 
 /* 7b) 粘液块 slime：射程倍率被砍（1 → (1-0.4)^2 = 0.36）。
  *   这套数值原封不动从"旧冰冰冰"（那会儿还叫冻结砖）搬过来的，只是换了砖种。 */
@@ -301,6 +311,34 @@ g.doJump();
 const distSlimed = Math.hypot(g.jump.to.x - g.jump.from.x, g.jump.to.z - g.jump.from.z);
 g.state = 'ready';
 g.setSlime(0);
+
+/* 7b2) 粘液的生命周期：落到粘液 → +1 层；落到普通砖 → **全清**（离开即失效）。
+ *   以前粘液是常驻叠乘，离开以后照样残废 —— 用户明确要求跟弹簧对称：离开就没了。 */
+g.backToTitle();
+await sleep(150);
+const savedGap7b = g.fixedGap;
+g.fixedGap = null;                            // 同 7a3：解锁随机间距，才能测到生成器收口
+g.beginRun();
+await sleep(200);
+const sl1 = g.next;
+sl1.trait = 'slime';                          // 目标砖：粘液
+g.charRoot.position.set(sl1.center.x, 0, sl1.center.z);
+g.state = 'jumping';
+g.finishJump();
+const slimeOnBrick = g.slimeLv;               // 必须是 1（站在粘液上）
+/* 7b3) 站粘液上生成的新一块**不能太远**：射程被砍到 ×0.6，
+ *   生成器必须把间距上限压进"满蓄力也够得着"的范围，否则必然跳不过去 —— 物理无解 */
+const slimeGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
+const slimeGapHi = (CFG.jumpMin + CFG.jumpRange) * g.rangeMul() * 0.90;
+const slimeGapOk = slimeGap <= slimeGapHi + 1e-6;
+g.fixedGap = savedGap7b;
+const sl2 = g.next;
+sl2.trait = null;                             // 下一块：普通砖
+g.charRoot.position.set(sl2.center.x, 0, sl2.center.z);
+g.state = 'jumping';
+g.finishJump();
+const slimeAfterLeave = g.slimeLv;            // 必须是 0（离开粘液就干净了）
+const slimeRangeAfterLeave = g.rangeMul();    // 射程倍率也必须回到 1
 
 /* 7c) 冰冰冰 freeze：落上后角色被冻住 CFG.freezeMs（默认 1.5s），
  *   这期间 press() 拿不回控制权；倒计时走完自动解冻、恢复可跳。
@@ -733,8 +771,12 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && distBoosted > distNoBoost * 1.5                           // 那一跳真的更远
   && boostAfterLand === 0 && landState === 'ready'             // ★ 离开弹簧 → 助推结束
   && boostOnSpring === 1                                       // 站在弹簧上 → 还有助推
+  && springGapOk === true                                      // ★ 弹簧的下一块不能太近（轻跳也飞不过头）
   && Math.abs(slimeMul - 0.36) < 1e-6                          // (1-0.4)^2
   && distSlimed < distNoBoost * 0.6                            // 射程真的被砍了
+  && slimeOnBrick === 1                                        // 落上粘液 → +1 层
+  && slimeGapOk === true                                       // ★ 粘液的下一块不能太远（满蓄力也够得着）
+  && slimeAfterLeave === 0 && Math.abs(slimeRangeAfterLeave - 1) < 1e-6  // ★ 离开粘液 → 层数清零、射程复原
   && freezeLand.frozenT > 1.4 && freezeLand.flag === true      // 落上就被冻住，冰壳同步打开
   && freezeLand.dingReady === true && freezeLand.dingPlayed === true // 叮叮叮解码好且真的在放
   && freezePress.charging === false && freezePress.power === 0 // 冻住期间按不出蓄力
@@ -814,6 +856,11 @@ return {
     land: boostAfterLand, onSpring: boostOnSpring, buffTagShown, buffTagText,
   },
   dist: { noBoost: +distNoBoost.toFixed(3), boosted: +distBoosted.toFixed(3), slimed: +distSlimed.toFixed(3) },
+  gapGuard: {
+    springGap: +springGap.toFixed(3), springGapLo: +springGapLo.toFixed(3), springGapOk,
+    slimeGap: +slimeGap.toFixed(3), slimeGapHi: +slimeGapHi.toFixed(3), slimeGapOk,
+    slimeOnBrick, slimeAfterLeave, slimeRangeAfterLeave: +slimeRangeAfterLeave.toFixed(3),
+  },
   slimeMul: +slimeMul.toFixed(3),
   freeze: { land: freezeLand, press: freezePress, thaw: freezeThaw, afterPress: freezeAfterPress },
   lure: {

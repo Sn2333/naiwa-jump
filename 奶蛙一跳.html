@@ -55522,8 +55522,9 @@ const PALETTE = [
 const POINTS = { base: 1, mini: 2, fragile: 2, spring: 3, special: 5, peach: 10, holy: 5 };
 
 /* 会给玩家上"状态"的砖（起跳时读取，落上时生效）。
- * spring 的助推**只活一跳**（从弹簧起跳 → 落地自动清掉，不跨砖累积），
- * slime 是射程削减（常驻叠加），freeze 是即时的"冻住 1.5 秒"，lure 只作用于下一跳。 */
+ * 效果都**只属于脚下方块**：spring 的助推只活一跳（落地自动清），
+ * slime 的削减离开粘液砖也自动清；freeze 是即时的"冻住 1.5 秒"（时间到自动解），
+ * lure 只作用于下一跳。没有任何效果能被带去别的砖。 */
 const EFFECT_TRAITS = ['spring', 'slime', 'freeze', 'lure'];
 
 const MINI_SCALE = 0.62;          // 迷你砖相对正常砖的半径比例
@@ -56933,7 +56934,7 @@ class Game {
      * 就来不及了（第一声一定哑）。laugh=奶块的大笑，ding=冰冰冰的"叮叮叮"。 */
     sound.prepareClip('laugh', LAUGH_URI);
     sound.prepareClip('ding', DING_URI);
-    /* 常驻状态：弹簧助推（跳更远，只活一跳）/ 粘液层数（跳更短，常驻叠加）。
+    /* 常驻状态：弹簧助推（跳更远，只活一跳）/ 粘液层数（跳更短，离开粘液砖即清）。
      * 冻结是**即时**效果，不叠层 —— 只有一个倒计时 frozenT（秒） */
     this.boostLv = 0;
     this.slimeLv = 0;
@@ -58342,9 +58343,22 @@ class Game {
 
     const gapMin = CFG.gapMin + prog * CFG.gapMinRamp;
     const gapMax = CFG.gapMax + prog * CFG.gapMaxRamp;
+    /* ★ 效果砖改变了"从脚下这块起跳"的可达区间，下一块的间距必须跟着收放，
+     * 不然会摆出**物理上无解**的局：
+     *   · 站在粘液上射程被砍（最多 ×0.36），下一块照常摆 3.6 远就必然跳不过去；
+     *   · 站在弹簧上最轻一跳也飞 0.95×1.92 ≈ 1.8 远，下一块摆近了必然直接跳过头。
+     * 这里的 rangeMul() 是玩家**此刻**站在 current 上的真实倍率 —— spawnNext
+     * 发生在落地状态更新之后，所以连排粘液/弹簧会逐块自动收紧，不用额外记链。
+     * （?gap= 固定调试间距时不干预，探针用例要的是确定的布局。） */
+    let lo = gapMin, hi = gapMax;
+    if (this.fixedGap == null) {
+      const maxReach = (CFG.jumpMin + CFG.jumpRange) * this.rangeMul();
+      hi = Math.min(hi, maxReach * 0.90);                       // 满蓄力也够得着（留 10% 余量）
+      if (this.boostLv > 0) lo = Math.max(lo, CFG.jumpMin * this.rangeMul() * 1.30); // 轻蓄力也飞不过头
+    }
     const gap = this.fixedGap != null
       ? this.fixedGap
-      : gapMin + Math.random() * (gapMax - gapMin);
+      : (lo < hi ? lo + Math.random() * (hi - lo) : hi);        // lo≥hi 说明区间被压穿了，取上限贴着可达边缘
     const x = this.current.center.x + (axis === 'x' ? -gap : 0);
     const z = this.current.center.z + (axis === 'z' ? -gap : 0);
 
@@ -58590,7 +58604,7 @@ class Game {
   }
 
   /** 射程倍率：弹簧助推与粘液削减叠乘。
-   *  弹簧助推只活一跳（落地即清），粘液是常驻叠加 —— 两者都会上 HUD 状态条。 */
+   *  两个效果都只属于脚下方块（离开即清）—— 都会上 HUD 状态条。 */
   rangeMul() {
     return (1 + this.boostLv * CFG.boostRange) * Math.pow(1 - CFG.slimeK, this.slimeLv);
   }
@@ -58810,6 +58824,12 @@ class Game {
        *   落地只有这一个出口，写在这儿谁也漏不掉（下次有人加砖种也不会忘）。
        *   这就是"射程加成离开弹簧就失效"的实现点。 */
       this.setBoost(target.trait === 'spring');
+
+      /* 负面效果同理，**只属于脚下方块**：离开粘液块就全干掉了。
+       * slime 分支在上面已经 +1（落在粘液上），这里只清"落到别的砖"的情况。
+       * 以前粘液是常驻叠乘，玩家连续吃两层之后永远残废 —— 那不是惩罚，
+       * 是判死刑；现在和弹簧对称：好效果离开就没了，坏效果离开也没了。 */
+      if (target.trait !== 'slime' && this.slimeLv > 0) this.setSlime(0);
 
       this.score += gain;
       this.updateScoreUI();
