@@ -9,7 +9,10 @@
 CREATE TABLE IF NOT EXISTS board (
   nick       TEXT    PRIMARY KEY,          -- 昵称，也是唯一身份（没有账号系统）
   best       INTEGER NOT NULL DEFAULT 0,   -- 该昵称的历史最高分
-  updated_at INTEGER NOT NULL DEFAULT 0    -- 最近一次提高成绩的毫秒时间戳
+  updated_at INTEGER NOT NULL DEFAULT 0,   -- 最近一次提高成绩的毫秒时间戳
+  pid        INTEGER                         -- 玩家固定编号，从 1001 起发，永不重复
+                                            -- （ensureSchema 迁移时补列；老玩家按首次
+                                            --  上榜时间先后发号，新玩家提交时现场发号）
 );
 
 -- 排行和「我第几名」都按 best 排序/比较，建索引让这两句走索引范围扫描，

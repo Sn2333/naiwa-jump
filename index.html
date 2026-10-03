@@ -593,6 +593,11 @@ if (location.search.indexOf('dbg') >= 0) {
   }
   #userTag b { color: var(--accent); }
 
+  /* 玩家固定编号：缀在昵称后面的 #1001，半透明小字 —— 昵称会重名，编号不会 */
+  .pid { opacity: .5; font-weight: 400; font-variant-numeric: tabular-nums; }
+  .rankRow .pid { margin-left: 4px; font-size: .86em; flex-shrink: 0; }
+  .rankRow.me .pid { color: var(--cell-on-ink); }
+
   /* ---------------- 奶币 / 商店 / 公告 ----------------
    * 奶币徽章钉在开始页顶部居中：局内不显示（结算才变动），标题页一眼看到余额。
    * 开始页是 flex-end 贴底布局，所以徽章用绝对定位挂到上边。 */

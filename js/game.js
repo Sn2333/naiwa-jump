@@ -6,7 +6,7 @@ import * as THREE from './vendor/three.module.js';
 import { Character3D, charList, charDef } from './character.js';
 import { DEFAULT_CHAR } from './sprite_data.js';
 import { bgList, bgDef, DEFAULT_BG } from './theme.js';
-import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard } from './api.js';
+import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard, fetchPid } from './api.js';
 import { sound } from './audio.js';
 import { edgeOver, perfectTol } from './hit.js';
 import { accList, accDef, accCat, ACC_CATS, shopAccList } from './acc.js';
@@ -69,7 +69,7 @@ const CFG = {
 
   /* —— 特殊效果砖的参数 —— */
   boostRange: 0.92,     // 弹簧助推：从弹簧起跳的那一跳射程 ×1.92。**不叠层、不跨砖**
-  slimeK: 0.30,         // 粘液块：每层把能跳的最大距离砍掉三成（玩家反馈 0.40 太难，已减弱）
+  slimeK: 0.25,         // 粘液块：每层把能跳的最大距离砍掉两成半（0.40→0.30→0.25，一路按玩家反馈放软）
   slimeMax: 2,          // 粘液最多叠几层（再砍就跳不动了，得留活路）
   freezeMs: 1500,       // 冰冰冰：把角色冻住多少毫秒（期间不能蓄力起跳）
   /* 磁铁砖：只管"对准"，不管"够远"。蓄力差一点点它把你拽回砖心；
@@ -1507,8 +1507,10 @@ class Game {
     this.charKey = localStorage.getItem('jump3d_char') || DEFAULT_CHAR;
     /* 背景：默认奶油黄 */
     this.bgKey = localStorage.getItem('jump3d_bg') || DEFAULT_BG;
-    /* 昵称：存在本机，填了才会把成绩传到全服榜；没填就是纯本地玩 */
+    /* 昵称：存在本机，填了才会把成绩传到全服榜；没填就是纯本地玩。
+     * 编号（#1001 起）是服务端发的，开机异步问一次，到了再刷 UI。 */
     loadProfile();
+    fetchPid().then(() => this.refreshNickUI()).catch(() => { /* 静默 */ });
     this.rankBusy = false;
     this.state = 'start';
     this.pausedFrom = null;   // 暂停前的状态，继续时接回去
@@ -2053,12 +2055,16 @@ class Game {
     el.className = kind;
   }
 
-  /** 把昵称同步到三处界面：面板、主页标签、按钮文案 */
+  /** 把昵称同步到界面：面板、主页标签、按钮文案。后面都缀一个半透明的
+   *  固定编号（#1001 起，服务端发的、全网唯一）—— 昵称可以重名，编号不会。 */
   refreshNickUI() {
     const d = this.dom;
     const on = !!profile.nick;
+    const tag = on && profile.pid != null
+      ? ` <span class="pid">#${profile.pid}</span>`
+      : '';
     d.acctWho.innerHTML = on
-      ? `当前昵称 <b>${escapeHTML(profile.nick)}</b>`
+      ? `当前昵称 <b>${escapeHTML(profile.nick)}</b>${tag}`
       : '还没有设昵称';
     d.nickInput.value = profile.nick || '';
     d.nickClear.classList.toggle('hidden', !on);
@@ -2071,7 +2077,7 @@ class Game {
     d.accountBtn.setAttribute('aria-label', on ? '修改昵称' : '设置昵称');
 
     d.userTag.classList.toggle('hidden', !on);
-    if (on) d.userTag.innerHTML = `昵称 <b>${escapeHTML(profile.nick)}</b>`;
+    if (on) d.userTag.innerHTML = `昵称 <b>${escapeHTML(profile.nick)}</b>${tag}`;
   }
 
   openAccountPanel() {
@@ -2092,6 +2098,8 @@ class Game {
       this.refreshNickUI();
       sound.pick();
       this.pushBest();
+      /* 新昵称要问服务端领编号（老昵称则找回原来的号），到了再刷一次 UI */
+      fetchPid().then(() => this.refreshNickUI()).catch(() => { /* 静默 */ });
     } catch (e) {
       this.acctMsg(e.message, 'err');
     }
@@ -2833,10 +2841,18 @@ class Game {
           const nk = document.createElement('span');
           nk.className = 'nk';
           nk.textContent = e.nick;
+          row.append(no, nk);
+          /* 固定编号缀在昵称后面，半透明 —— 昵称会重名，编号不会 */
+          if (e.pid != null) {
+            const pd = document.createElement('span');
+            pd.className = 'pid';
+            pd.textContent = '#' + e.pid;
+            row.append(pd);
+          }
           const sc = document.createElement('span');
           sc.className = 'sc';
           sc.textContent = e.best + ' 分';
-          row.append(no, nk, sc);
+          row.append(sc);
           frag.appendChild(row);
         }
         this.dom.rankList.appendChild(frag);
@@ -2947,18 +2963,18 @@ class Game {
     const gapMax = CFG.gapMax + prog * CFG.gapMaxRamp;
     /* ★ 效果砖改变了"从脚下这块起跳"的可达区间，下一块的间距必须跟着收放，
      * 不然会摆出**物理上无解**的局：
-     *   · 站在粘液上射程被砍（最多 ×0.49），下一块照常摆 3.6 远就必然跳不过去；
+     *   · 站在粘液上射程被砍（最多 ×0.5625），下一块照常摆 3.6 远就必然跳不过去；
      *   · 站在弹簧上最轻一跳也飞 0.95×1.92 ≈ 1.8 远，下一块摆近了必然直接跳过头。
      * 这里的 rangeMul() 是玩家**此刻**站在 current 上的真实倍率 —— spawnNext
      * 发生在落地状态更新之后，所以连排粘液/弹簧会逐块自动收紧，不用额外记链。
      * （?gap= 固定调试间距时不干预，探针用例要的是确定的布局。）
-     * 2026-10-03 玩家反馈太难，两处都放宽：弹簧下限 1.30 → 1.15（只需轻蓄 ~15%），
-     * 粘液每层削减 0.40 → 0.30（见 CFG.slimeK）。 */
+     * 2026-10-03 玩家反馈太难，两轮放宽：弹簧下限 1.30 → 1.15 → 1.08，
+     * 粘液每层削减 0.40 → 0.30 → 0.25（见 CFG.slimeK）。 */
     let lo = gapMin, hi = gapMax;
     if (this.fixedGap == null) {
       const maxReach = (CFG.jumpMin + CFG.jumpRange) * this.rangeMul();
       hi = Math.min(hi, maxReach * 0.90);                       // 满蓄力也够得着（留 10% 余量）
-      if (this.boostLv > 0) lo = Math.max(lo, CFG.jumpMin * this.rangeMul() * 1.15); // 轻蓄力也飞不过头
+      if (this.boostLv > 0) lo = Math.max(lo, CFG.jumpMin * this.rangeMul() * 1.08); // 轻蓄力也飞不过头
     }
     const gap = this.fixedGap != null
       ? this.fixedGap

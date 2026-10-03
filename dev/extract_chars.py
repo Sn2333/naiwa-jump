@@ -191,7 +191,7 @@ OVERRIDE = {
     # 不用 estimate_bg + Otsu 那套，是因为角色身上有大片**接近中性**的浅黄高光
     # （头顶那圈 R-G 只有 5 上下），Otsu 的阈值一压就把它啃掉 —— 第一版把大奶的
     # 头顶啃出一排锯口。改成只看 R-B：背景 0~3、蛙身 40 起步，中间空得很。
-    "bigmilk": {"warm": {"rb": 20}},
+    "bigmilk": {"warm": {"rb": 20}, "unfillBg": {"from": 0.45}, "trimShadow": (0.12, 0.12)},
     "fight": {"warm": {"rb": 20}},
     # 奶豪：黑卫衣 + 白底 + 白 W 印花。白 W 和白底同色，色差法必然把它当背景，
     # 但它被卫衣整个包住 → 是个"孔"，后面的 fill_holes 会填回来（实测有效）。
@@ -365,6 +365,20 @@ def cutout(path, key):
     m[:6, :] = m[-6:, :] = m[:, :6] = m[:, -6:] = False
 
     m = ndimage.binary_fill_holes(m)
+    if ov.get("unfillBg"):
+        # fill_holes 会把"闭合口袋里的背景"也填实 —— 大奶裆部那块白底被两条腿
+        # 加肚皮包成了封闭区，填完成一坨不透明白（实测 4881 像素）。填完把
+        # 颜色判据再收一遍：填进来的像素颜色不达标（白底 R-B≈0~3），退回去。
+        # ★ 只在画面下半部生效（from = 高度比例）：大奶的眼睛也是白的，全图
+        #   一刀切会把白眼球挖成两个洞（第一版就这么翻车的）。
+        # 只对 warm 系判据开放 —— 白底图上角色没有纯白部件才敢用。
+        w = ov["warm"]
+        keep = (img[..., 0] - img[..., 2]) > w["rb"]
+        if "rg" in w:
+            keep &= (img[..., 0] - img[..., 1]) > w["rg"]
+        frm = ov["unfillBg"]
+        cut = int(H * (frm["from"] if isinstance(frm, dict) else 0.0))
+        m[cut:, :] &= keep[cut:, :]
     m = drop_flat_bottom(m)
 
     if ov.get("trimShadow"):

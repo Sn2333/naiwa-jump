@@ -20,6 +20,7 @@
 
 const LS_NICK = 'jump3d_nick';
 const LS_BEST = 'jump3d_best';
+const LS_PID = 'jump3d_pid';               // 服务端发的固定编号（#1001 起），跟昵称配套
 const LS_SCORES = 'jump3d_local_scores';   // 本地模式：{ 昵称: best }
 
 const NICK_MIN = 2;
@@ -29,8 +30,8 @@ const NICK_MAX = 12;
  *  Worker 的 checkNick() 里有一套完全等价的校验（不信客户端），两边文案保持一致。 */
 const NICK_RE = /^[0-9A-Za-z_\u4e00-\u9fa5\u3040-\u30ff-]+$/;
 
-/** 当前昵称（内存里的那一份，磁盘上另存） */
-export const profile = { nick: '' };
+/** 当前昵称 + 服务端编号（内存里的那一份，磁盘上另存） */
+export const profile = { nick: '', pid: null };
 
 /* ------------------------------------------------------------------ */
 /* 后端地址                                                            */
@@ -207,7 +208,28 @@ function writeJSON(key, val) {
 
 export function loadProfile() {
   try { profile.nick = localStorage.getItem(LS_NICK) || ''; } catch (e) { profile.nick = ''; }
+  try { profile.pid = Number(localStorage.getItem(LS_PID)) || null; } catch (e) { profile.pid = null; }
   return profile;
+}
+
+/** 问服务端要当前昵称的固定编号（#1001 起）。拿到就存进 profile + 本地。
+ *  没昵称 / 本地模式 / 单文件离线版 → null，界面上就不显示 #号。
+ *  断网或后端一时没就绪也不打扰玩家 —— 静默返回已有的缓存值。 */
+export async function fetchPid() {
+  if (typeof window !== 'undefined') window.__profile = profile;   // 探针/调试入口
+  const nick = profile.nick;
+  if (!nick || !HTTP_MODE) return profile.pid || null;
+  try {
+    const r = await httpJSON('GET', '/api/who?nick=' + encodeURIComponent(nick));
+    if (r && r.pid != null) storePid(r.pid);
+  } catch (e) { /* 静默：编号显示不出来不影响玩 */ }
+  return profile.pid;
+}
+
+function storePid(pid) {
+  if (pid == null) return;
+  profile.pid = pid;
+  try { localStorage.setItem(LS_PID, String(pid)); } catch (e) { /* 忽略 */ }
 }
 
 /** 本机最高成绩。它才是玩家真正在意的数，和昵称一样存在本地。 */
@@ -227,20 +249,29 @@ export function validateNick(nick) {
   return '';
 }
 
-/** 保存昵称。填了昵称，成绩才会往全服榜上传。 */
+/** 保存昵称。填了昵称，成绩才会往全服榜上传。换昵称后旧编号作废，
+ *  等下一次提交成绩时服务端会按新昵称发新号（或找回旧号）。 */
 export function setNick(nick) {
   const n = (nick || '').trim();
   const bad = validateNick(n);
   if (bad) throw new Error(bad);
+  if (n !== profile.nick) { profile.pid = null; }
   profile.nick = n;
-  try { localStorage.setItem(LS_NICK, n); } catch (e) { /* 隐私模式写不进去，本次会话内仍有效 */ }
+  try {
+    localStorage.setItem(LS_NICK, n);
+    localStorage.removeItem(LS_PID);
+  } catch (e) { /* 隐私模式写不进去，本次会话内仍有效 */ }
   return n;
 }
 
 /** 清除昵称：退回「只存本机」，本机最高成绩保留不动。 */
 export function clearNick() {
   profile.nick = '';
-  try { localStorage.removeItem(LS_NICK); } catch (e) { /* 同上 */ }
+  profile.pid = null;
+  try {
+    localStorage.removeItem(LS_NICK);
+    localStorage.removeItem(LS_PID);
+  } catch (e) { /* 同上 */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -262,7 +293,8 @@ export async function submitScore(score) {
 
   if (HTTP_MODE) {
     const r = await httpJSON('POST', '/api/submit', { nick, score: s });
-    return { best: r.best, rank: r.rank, nick: r.nick || nick, local: false };
+    storePid(r.pid);
+    return { best: r.best, rank: r.rank, pid: r.pid ?? null, nick: r.nick || nick, local: false };
   }
 
   const r = await rpc('jump_submit', { p_nick: nick, p_score: s });
@@ -293,7 +325,7 @@ export async function leaderboard(limit = 100) {
     const q = `/api/rank?limit=${n}` + (nick ? `&nick=${encodeURIComponent(nick)}` : '');
     const r = await httpJSON('GET', q);
     const list = (r.list || []).map((e) => ({
-      rank: e.rank, nick: e.nick, best: e.best,
+      rank: e.rank, nick: e.nick, best: e.best, pid: e.pid ?? null,
       me: !!nick && e.nick === nick,
     }));
     return { list, me: r.me || null, local: false };

@@ -23,8 +23,18 @@ const NICK_RE = /^[0-9A-Za-z_\u4e00-\u9fa5\u3040-\u30ff-]+$/;
 const MAX_SCORE = 1000000;
 const MAX_LIMIT = 200;
 
-/** nick -> { best, updated_at } */
+/** nick -> { best, updated_at, pid } */
 const board = new Map();
+
+/** 编号从 1001 起发，与真 Worker 的 SQL 语义一致：MAX(pid)+1，只发不收。 */
+function ensurePid(nick) {
+  const cur = board.get(nick);
+  if (!cur || cur.pid != null) return cur ? cur.pid : null;
+  let mx = 1000;
+  for (const v of board.values()) if (v.pid > mx) mx = v.pid;
+  cur.pid = mx + 1;
+  return cur.pid;
+}
 
 function checkNick(nick) {
   if (nick.length < NICK_MIN || nick.length > NICK_MAX) {
@@ -58,7 +68,7 @@ function rankList(limit) {
   return [...board.entries()]
     .sort((a, b) => b[1].best - a[1].best || a[1].updated_at - b[1].updated_at)
     .slice(0, limit)
-    .map(([nick, v], i) => ({ rank: i + 1, nick, best: v.best }));
+    .map(([nick, v], i) => ({ rank: i + 1, nick, best: v.best, pid: v.pid ?? null }));
 }
 
 function json(res, status, obj, origin) {
@@ -122,7 +132,8 @@ const server = http.createServer(async (req, res) => {
     if (score > MAX_SCORE) return json(res, 400, { ok: false, msg: '成绩超出上限' }, origin);
 
     const best = submit(nick, score);
-    return json(res, 200, { ok: true, nick, best, rank: rankOf(nick) }, origin);
+    const pid = ensurePid(nick);
+    return json(res, 200, { ok: true, nick, best, pid, rank: rankOf(nick) }, origin);
   }
 
   if (url.pathname === '/api/rank') {
@@ -135,10 +146,21 @@ const server = http.createServer(async (req, res) => {
     let me = null;
     if (nick) {
       const hit = list.find((e) => e.nick === nick);
-      if (hit) me = { rank: hit.rank, best: hit.best };
-      else if (board.has(nick)) me = { rank: rankOf(nick), best: board.get(nick).best };
+      if (hit) me = { rank: hit.rank, best: hit.best, pid: hit.pid };
+      else if (board.has(nick)) {
+        const v = board.get(nick);
+        me = { rank: rankOf(nick), best: v.best, pid: v.pid ?? null };
+      }
     }
     return json(res, 200, { ok: true, list, me }, origin);
+  }
+
+  if (url.pathname === '/api/who') {
+    const rawNick = (url.searchParams.get('nick') || '').trim();
+    const bad = checkNick(rawNick);
+    if (bad) return json(res, 400, { ok: false, msg: bad }, origin);
+    const v = board.get(rawNick);
+    return json(res, 200, { ok: true, nick: rawNick, pid: v ? (v.pid ?? null) : null }, origin);
   }
 
   // 测试用：清空榜单

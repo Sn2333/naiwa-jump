@@ -297,11 +297,11 @@ g.setBoost(false);
 /* 7a3) 弹簧的下一块**不能太近**：站弹簧上最轻一跳也飞 minReach×1.92 远，
  *   生成器必须把间距下限抬到轻跳也飞不过头的位置，否则满射程必跳过 —— 物理无解 */
 const springGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
-const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.15;
+const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.08;
 const springGapOk = springGap >= springGapLo - 1e-6;
 g.fixedGap = savedGap7a;
 
-/* 7b) 粘液块 slime：射程倍率被砍（1 → (1-0.3)^2 = 0.49；0.40 时代是 0.36）。
+/* 7b) 粘液块 slime：射程倍率被砍（1 → (1-0.25)^2 = 0.5625；0.30 时代是 0.49，0.40 时代是 0.36）。
  *   这套数值原封不动从"旧冰冰冰"（那会儿还叫冻结砖）搬过来的，只是换了砖种。 */
 g.setBoost(0);
 g.setSlime(SLIME_MAX);
@@ -728,6 +728,43 @@ const settings = {
   panelOpen: setPanelOpen, setClosed,
 };
 
+/* ---------- 10) 玩家固定编号（#1001 起）的显示 ----------
+ * 服务端按昵称发号（who/submit/rank 都带 pid），前端在 userTag 与榜单行
+ * 昵称后面各缀一个半透明 .pid。这里伪造响应直接驱动渲染，不依赖网络。 */
+const pidTag = (async () => {
+  const P = window.__profile || {};
+  P.nick = '测试蛙';
+  P.pid = 1001;
+  g.refreshNickUI();
+  const tag = document.getElementById('userTag');
+  const tagPid = tag ? tag.querySelector('.pid') : null;
+  /* 榜单行：拦 fetch，喂一条带 pid 的假榜单，再跑一遍真实的渲染代码 */
+  const realFetch = window.fetch;
+  window.fetch = (u, o) => String(u).indexOf('/api/rank') >= 0
+    ? Promise.resolve(new Response(JSON.stringify({
+      ok: true,
+      list: [{ rank: 1, nick: '测试蛙', best: 9, pid: 1001 }],
+      me: { rank: 1, best: 9, pid: 1001 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    : realFetch(u, o);
+  let rows = null;
+  try { await g.refreshRank(); } catch (e) { /* 渲染内部已兜错 */ }
+  window.fetch = realFetch;
+  const row0 = document.querySelector('#rankList .rankRow');
+  const rowPid = row0 ? row0.querySelector('.pid') : null;
+  const nk = row0 ? row0.querySelector('.nk') : null;
+  rows = {
+    tagText: tagPid ? tagPid.textContent : '',
+    rowPid: rowPid ? rowPid.textContent : '',
+    order: row0 ? (nk.nextSibling === rowPid) : false,   // 编号紧跟昵称后面
+    dim: rowPid ? getComputedStyle(rowPid).opacity : null,
+  };
+  P.nick = ''; P.pid = null;                              // 还原，别污染后面的用例
+  g.refreshNickUI();
+  return rows;
+})();
+const pidTagOut = await pidTag;
+
 /* 落正中心 = perfect：base 1 + 连击 1 的 2 分 = 3，×2 之后必须是 6 */
 const ok = dotOn === true && notice.panel === true && notice.dot === false
   /* 三条公告：紧急通知（带正文）→ v1.1（带正文）→ 生日帽（无正文） */
@@ -752,6 +789,10 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && shop.coinIco === 1 && shop.hatGone === true && shop.accHead === false
   && shop.heads === '角色' && shop.charBuy === 1 && shop.price50 === true
   && shopClosed.panel === false && shopClosed.hasPanel === false
+  /* 玩家编号：userTag 与榜单行的昵称后面都要缀半透明 #1001 */
+  && pidTagOut.tagText === '#1001'
+  && pidTagOut.rowPid === '#1001' && pidTagOut.order === true
+  && pidTagOut.dim !== null && Number(pidTagOut.dim) < 0.9
   /* —— 奶币：砖上实体 / 拾取 / 累计 / 结算 —— */
   && coinsStart === 7
   && coinOnBrick === true && coinAttached === true && coinFaceIsMesh === true
@@ -779,7 +820,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && boostAfterLand === 0 && landState === 'ready'             // ★ 离开弹簧 → 助推结束
   && boostOnSpring === 1                                       // 站在弹簧上 → 还有助推
   && springGapOk === true                                      // ★ 弹簧的下一块不能太近（轻跳也飞不过头）
-  && Math.abs(slimeMul - 0.49) < 1e-6                          // (1-0.3)^2（0.40 时代是 0.36）
+  && Math.abs(slimeMul - 0.5625) < 1e-6                        // (1-0.25)^2（0.30 时代 0.49，0.40 时代 0.36）
   && distSlimed < distNoBoost * 0.6                            // 射程真的被砍了
   && slimeOnBrick === 1                                        // 落上粘液 → +1 层
   && slimeGapOk === true                                       // ★ 粘液的下一块不能太远（满蓄力也够得着）
@@ -884,4 +925,5 @@ return {
   acc: { noticeBuy, equipped, panelAcc, afterSwap, unequipped },
   char: { poor: charPoor, bought: charBought, anim, thumb },
   settings,
+  pidTag: pidTagOut,
 };

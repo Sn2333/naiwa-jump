@@ -16,9 +16,10 @@
  *   而且有 INSERT ... ON CONFLICT 的原子 upsert 和原生 ORDER BY。
  *   同样是 0 元，量级和正确性都好一个档位。
  *
- * 对外只有三个接口（和前端 js/api.js 里的 httpJSON 一一对应）：
- *   POST /api/submit   { nick, score }        按昵称 upsert 更高成绩，返回我的名次
- *   GET  /api/rank?limit=&nick=               全服榜 + 我的名次
+ * 对外只有四个接口（和前端 js/api.js 里的 httpJSON 一一对应）：
+ *   POST /api/submit   { nick, score }        按昵称 upsert 更高成绩，返回我的名次和编号
+ *   GET  /api/rank?limit=&nick=               全服榜 + 我的名次（每人带 pid 编号）
+ *   GET  /api/who?nick=                       查某昵称的编号（没上榜返回 pid:null）
  *   GET  /api/health                          存活探针 + 数据库绑定自检
  *
  * 这份文件除了标准 Web API 不依赖任何东西，可以整份复制粘贴到 Cloudflare
@@ -64,15 +65,34 @@ let schemaReady = null;
 
 function ensureSchema(env) {
   if (schemaReady) return schemaReady;
-  schemaReady = env.DB.batch([
-    env.DB.prepare(
-      'CREATE TABLE IF NOT EXISTS board ('
-      + ' nick TEXT PRIMARY KEY,'
-      + ' best INTEGER NOT NULL DEFAULT 0,'
-      + ' updated_at INTEGER NOT NULL DEFAULT 0)'
-    ),
-    env.DB.prepare('CREATE INDEX IF NOT EXISTS board_best_idx ON board (best DESC)'),
-  ]).catch((e) => {
+  schemaReady = (async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS board ('
+        + ' nick TEXT PRIMARY KEY,'
+        + ' best INTEGER NOT NULL DEFAULT 0,'
+        + ' updated_at INTEGER NOT NULL DEFAULT 0)'
+      ),
+      env.DB.prepare('CREATE INDEX IF NOT EXISTS board_best_idx ON board (best DESC)'),
+    ]);
+    /* pid：每个玩家的固定编号，从 1001 起发，永不重复、永不回收。
+     * 旧表没有这一列，ALTER 报「列已存在」就算迁移做过了，忽略。 */
+    try {
+      await env.DB.prepare('ALTER TABLE board ADD COLUMN pid INTEGER').run();
+    } catch (e) { /* 列已存在 */ }
+    /* 给历史玩家补号：按首次上榜时间（updated_at 升序）发，先来的号小。
+     * 起点取 MAX(pid) 与 1000 的较大者 —— 以后加新玩家也从这里接着发。 */
+    const { results } = await env.DB.prepare(
+      'SELECT nick FROM board WHERE pid IS NULL ORDER BY updated_at ASC'
+    ).all();
+    if (results && results.length) {
+      const mx = await env.DB.prepare('SELECT MAX(pid) AS m FROM board').first();
+      let next = Math.max(1000, (mx && mx.m) || 0);
+      await env.DB.batch(results.map((r) =>
+        env.DB.prepare('UPDATE board SET pid = ? WHERE nick = ? AND pid IS NULL')
+          .bind(++next, r.nick)));
+    }
+  })().catch((e) => {
     schemaReady = null;   // 失败就别缓存，下次请求再试
     throw e;
   });
@@ -209,13 +229,21 @@ async function handleSubmit(request, env, cors) {
     + '                     THEN excluded.updated_at ELSE board.updated_at END'
   ).bind(nick, score, Date.now()).run();
 
-  const row = await env.DB.prepare('SELECT best FROM board WHERE nick = ?')
+  /* 新面孔补发编号。MAX(pid)+1 写在 UPDATE 的子查询里，与赋值同一条语句完成 ——
+   * D1 的写是串行的，两个新人同时提交，后一个事务能看到前一个刚发的号，不撞号。 */
+  await env.DB.prepare(
+    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 1000) FROM board) + 1'
+    + ' WHERE nick = ? AND pid IS NULL'
+  ).bind(nick).run();
+
+  const row = await env.DB.prepare('SELECT best, pid FROM board WHERE nick = ?')
     .bind(nick).first();
 
   return json({
     ok: true,
     nick,
     best: row ? row.best : score,
+    pid: row ? row.pid : null,
     rank: await rankOf(env, nick),
   }, 200, cors);
 }
@@ -230,25 +258,35 @@ async function handleRank(url, env, cors) {
   /* 同分时先达成的排前面（updated_at 升序），否则同分玩家的名次会随查询抖动，
    * 刷新一次榜单一变，看着像 bug。 */
   const { results } = await env.DB.prepare(
-    'SELECT nick, best FROM board ORDER BY best DESC, updated_at ASC LIMIT ?'
+    'SELECT nick, best, pid FROM board ORDER BY best DESC, updated_at ASC LIMIT ?'
   ).bind(limit).all();
 
-  const list = (results || []).map((e, i) => ({ rank: i + 1, nick: e.nick, best: e.best }));
+  const list = (results || []).map((e, i) => ({ rank: i + 1, nick: e.nick, best: e.best, pid: e.pid }));
 
   let me = null;
   if (nick) {
     const hit = list.find((e) => e.nick === nick);
     if (hit) {
-      me = { rank: hit.rank, best: hit.best };
+      me = { rank: hit.rank, best: hit.best, pid: hit.pid };
     } else if (results && results.length >= limit) {
       /* 只有榜单被截断时才需要额外查一次 —— 否则「不在前 N 名」就已经说明了结果 */
-      const row = await env.DB.prepare('SELECT best FROM board WHERE nick = ?')
+      const row = await env.DB.prepare('SELECT best, pid FROM board WHERE nick = ?')
         .bind(nick).first();
-      if (row) me = { rank: await rankOf(env, nick), best: row.best };
+      if (row) me = { rank: await rankOf(env, nick), best: row.best, pid: row.pid };
     }
   }
 
   return json({ ok: true, list, me }, 200, cors);
+}
+
+/** 查某个昵称的编号。刚注册还没上过榜的玩家返回 pid:null（前端就先不显示#）。 */
+async function handleWho(url, env, cors) {
+  const rawNick = (url.searchParams.get('nick') || '').trim();
+  const bad = checkNick(rawNick);
+  if (bad) return json({ ok: false, msg: bad }, 400, cors);
+  const row = await env.DB.prepare('SELECT pid FROM board WHERE nick = ?')
+    .bind(rawNick).first();
+  return json({ ok: true, nick: rawNick, pid: row ? row.pid : null }, 200, cors);
 }
 
 /* ------------------------------------------------------------------ */
@@ -289,6 +327,9 @@ export default {
       }
       if (url.pathname === '/api/rank') {
         return await handleRank(url, env, cors);
+      }
+      if (url.pathname === '/api/who') {
+        return await handleWho(url, env, cors);
       }
       return json({ ok: false, msg: '没有这个接口' }, 404, cors);
     } catch (e) {
