@@ -26,11 +26,11 @@ const MAX_LIMIT = 200;
 /** nick -> { best, updated_at, pid } */
 const board = new Map();
 
-/** 编号从 1001 起发，与真 Worker 的 SQL 语义一致：MAX(pid)+1，只发不收。 */
+/** 编号八位、从 10000001 起发，与真 Worker 的 SQL 语义一致：MAX(pid)+1，只发不收。 */
 function ensurePid(nick) {
   const cur = board.get(nick);
   if (!cur || cur.pid != null) return cur ? cur.pid : null;
-  let mx = 1000;
+  let mx = 10000000;
   for (const v of board.values()) if (v.pid > mx) mx = v.pid;
   cur.pid = mx + 1;
   return cur.pid;

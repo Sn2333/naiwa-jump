@@ -593,7 +593,7 @@ if (location.search.indexOf('dbg') >= 0) {
   }
   #userTag b { color: var(--accent); }
 
-  /* 玩家固定编号：缀在昵称后面的 #1001，半透明小字 —— 昵称会重名，编号不会 */
+  /* 玩家固定编号：缀在昵称后面的 #10000001，半透明小字 —— 昵称会重名，编号不会 */
   .pid { opacity: .5; font-weight: 400; font-variant-numeric: tabular-nums; }
   .rankRow .pid { margin-left: 4px; font-size: .86em; flex-shrink: 0; }
   .rankRow.me .pid { color: var(--cell-on-ink); }
@@ -55589,14 +55589,14 @@ const PEACH_COLOR = 0xDE9A22;     // 黄桃块：琥珀金的砖身（顶面另�
  *   once  同一个公告只发一次（靠把公告版本号记进 jump3d_gift_<id> 来判重）
  * 领过一次之后按钮变成"已领取"，重启也还是已领取 —— 判重的键是**公告版本号**，
  * 所以以后发新公告、附件换新，玩家又能领一次新东西。 */
-const NOTICE_VERSION = '4';
+const NOTICE_VERSION = '5';
 /* 新的排前面。**赠礼判重键绑定在公告条目上（date|附件id）**，与 NOTICE_VERSION 无关 ——
  * 不然每发一条新公告，旧公告里的生日帽就能再领一次。 */
 const NOTICE_ITEMS = [
   {
     date: '2026-10-03',
     title: '紧急通知',
-    body: '由于游戏数据（昵称、奶币、分数记录）存储在浏览器缓存中，更新后重进可能会丢失数据，目前正在考虑解决方案。另外，下次更新时间不定。特此通知，请各位玩家理解。',
+    body: '由于游戏数据（昵称、奶币、分数记录）存储在浏览器缓存中，更新后重进可能会丢失数据，目前正在考虑解决方案。建议使用浏览器游玩。另外，下次更新时间不定。特此通知，请各位玩家理解。',
   },
   {
     date: '2026-10-03',
@@ -56950,7 +56950,7 @@ class Game {
     /* 背景：默认奶油黄 */
     this.bgKey = localStorage.getItem('jump3d_bg') || DEFAULT_BG;
     /* 昵称：存在本机，填了才会把成绩传到全服榜；没填就是纯本地玩。
-     * 编号（#1001 起）是服务端发的，开机异步问一次，到了再刷 UI。 */
+     * 编号（#10000001 起）是服务端发的，开机异步问一次，到了再刷 UI。 */
     loadProfile();
     fetchPid().then(() => this.refreshNickUI()).catch(() => { /* 静默 */ });
     this.rankBusy = false;
@@ -57498,7 +57498,7 @@ class Game {
   }
 
   /** 把昵称同步到界面：面板、主页标签、按钮文案。后面都缀一个半透明的
-   *  固定编号（#1001 起，服务端发的、全网唯一）—— 昵称可以重名，编号不会。 */
+   *  固定编号（#10000001 起，服务端发的、全网唯一）—— 昵称可以重名，编号不会。 */
   refreshNickUI() {
     const d = this.dom;
     const on = !!profile.nick;

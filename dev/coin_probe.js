@@ -728,13 +728,13 @@ const settings = {
   panelOpen: setPanelOpen, setClosed,
 };
 
-/* ---------- 10) 玩家固定编号（#1001 起）的显示 ----------
+/* ---------- 10) 玩家固定编号（#10000001 起）的显示 ----------
  * 服务端按昵称发号（who/submit/rank 都带 pid），前端在 userTag 与榜单行
  * 昵称后面各缀一个半透明 .pid。这里伪造响应直接驱动渲染，不依赖网络。 */
 const pidTag = (async () => {
   const P = window.__profile || {};
   P.nick = '测试蛙';
-  P.pid = 1001;
+  P.pid = 10000001;
   g.refreshNickUI();
   const tag = document.getElementById('userTag');
   const tagPid = tag ? tag.querySelector('.pid') : null;
@@ -743,8 +743,8 @@ const pidTag = (async () => {
   window.fetch = (u, o) => String(u).indexOf('/api/rank') >= 0
     ? Promise.resolve(new Response(JSON.stringify({
       ok: true,
-      list: [{ rank: 1, nick: '测试蛙', best: 9, pid: 1001 }],
-      me: { rank: 1, best: 9, pid: 1001 },
+      list: [{ rank: 1, nick: '测试蛙', best: 9, pid: 10000001 }],
+      me: { rank: 1, best: 9, pid: 10000001 },
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
     : realFetch(u, o);
   let rows = null;
@@ -771,7 +771,8 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && notice.hasPanel === true && notice.items === 3
   && notice.date.indexOf('2026-10-03') >= 0
   && notice.title.indexOf('紧急通知') >= 0
-  && notice.firstBody.indexOf('浏览器缓存') >= 0 && notice.firstBody.indexOf('特此通知') >= 0
+  && notice.firstBody.indexOf('浏览器缓存') >= 0 && notice.firstBody.indexOf('建议使用浏览器') >= 0
+  && notice.firstBody.indexOf('特此通知') >= 0
   && notice.thirdBody === false
   && notice.giftLine.indexOf('生日帽') >= 0 && notice.giftBtn === true
   && notice.ownedBefore === false                     // 弹出来的时候还没领
@@ -781,7 +782,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && gift.keys.indexOf('2026-10-02:hat_birthday') >= 0
   && giftAgain.owned === true && giftAgain.keys === gift.keys.length
   && noticeClosed.panel === false && noticeClosed.dot === false
-  && noticeClosed.seen === '4'                 // NOTICE_VERSION 变了这里要跟着改
+  && noticeClosed.seen === '5'                 // NOTICE_VERSION 变了这里要跟着改
   && noticeClosed.hasPanel === false
   && noticeAgain === false
   /* 商店：生日帽已下架，只剩"角色"一栏、放着 50 奶币的大笑奶蛙 */
@@ -789,9 +790,9 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && shop.coinIco === 1 && shop.hatGone === true && shop.accHead === false
   && shop.heads === '角色' && shop.charBuy === 1 && shop.price50 === true
   && shopClosed.panel === false && shopClosed.hasPanel === false
-  /* 玩家编号：userTag 与榜单行的昵称后面都要缀半透明 #1001 */
-  && pidTagOut.tagText === '#1001'
-  && pidTagOut.rowPid === '#1001' && pidTagOut.order === true
+  /* 玩家编号：userTag 与榜单行的昵称后面都要缀半透明 #10000001 */
+  && pidTagOut.tagText === '#10000001'
+  && pidTagOut.rowPid === '#10000001' && pidTagOut.order === true
   && pidTagOut.dim !== null && Number(pidTagOut.dim) < 0.9
   /* —— 奶币：砖上实体 / 拾取 / 累计 / 结算 —— */
   && coinsStart === 7

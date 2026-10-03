@@ -44,15 +44,19 @@ class FakeD1 {
 
 const env = { DB: new FakeD1() };
 
-/* 预置一个「升级前的旧版表」：没有 pid 列、已有两名老玩家。
- * 第一次 API 调用会触发 ensureSchema 的迁移（补列 + 按首次上榜时间补号），
+/* 预置一个「v1 时代已迁移过列、但号还是四位」的表：
+ *  - 老玩家甲/乙：还没号（pid NULL，等补号）
+ *  - v1老号：v1 时代发的四位号 1001（等平移成八位）
+ * 第一次 API 调用会触发 ensureSchema 的迁移（列已存在 → 忽略；四位号平移；NULL 补号），
  * 后面的用例顺便把迁移结果一起验了。 */
 env.DB.db.prepare(
   'CREATE TABLE board (nick TEXT PRIMARY KEY, best INTEGER NOT NULL DEFAULT 0,'
   + ' updated_at INTEGER NOT NULL DEFAULT 0)'
 ).run();
+env.DB.db.prepare('ALTER TABLE board ADD COLUMN pid INTEGER').run();
 env.DB.db.prepare(
-  "INSERT INTO board (nick, best, updated_at) VALUES ('老玩家甲', 50, 100), ('老玩家乙', 60, 200)"
+  "INSERT INTO board (nick, best, updated_at, pid) VALUES"
+  + " ('老玩家甲', 50, 100, NULL), ('老玩家乙', 60, 200, NULL), ('v1老号', 70, 150, 1001)"
 ).run();
 
 /* ------------------------------------------------------------------ */
@@ -135,17 +139,20 @@ console.log('### 存活 / CORS ###');
   check('同域名但协议不同不放行（防 http 冒充 https）', r8.status === 403, r8.status);
 }
 
-console.log('\n### 玩家编号（pid，从 1001 起发） ###');
+console.log('\n### 玩家编号（pid，八位、从 10000001 起） ###');
 {
-  /* 第一次调用已经跑完迁移：旧表补了 pid 列，两名老玩家按首次上榜时间领号 */
+  /* 第一次调用已经跑完迁移：v1 四位号平移成八位，无号老玩家按首次上榜时间补号 */
+  const { data: v1 } = await call('GET', '/api/who?nick=' + encodeURIComponent('v1老号'));
+  check('v1 四位号 1001 平移成 #10000001（顺序不变）', v1.pid === 10000001, v1);
+
   const { data: w1 } = await call('GET', '/api/who?nick=' + encodeURIComponent('老玩家甲'));
   const { data: w2 } = await call('GET', '/api/who?nick=' + encodeURIComponent('老玩家乙'));
-  check('老玩家甲补到 #1001（先上榜号小）', w1.pid === 1001, w1);
-  check('老玩家乙补到 #1002', w2.pid === 1002, w2);
+  check('老玩家甲补到 #10000002（接在最大号后面）', w1.pid === 10000002, w1);
+  check('老玩家乙补到 #10000003', w2.pid === 10000003, w2);
 
   const { data: w3 } = await call('GET', '/api/who?nick=' + encodeURIComponent('查无此人'));
-  check('who 给没上榜的昵称当场注册发号 #1003（设昵称就能看到#号）',
-    w3.ok === true && w3.pid === 1003, w3);
+  check('who 给没上榜的昵称当场注册发号 #10000004（设昵称就能看到#号）',
+    w3.ok === true && w3.pid === 10000004, w3);
 
   const { res: w4 } = await call('GET', '/api/who?nick=a');
   check('who 的昵称校验和 submit 一样严', w4.status === 400, w4.status);
@@ -156,34 +163,35 @@ console.log('\n### 提交成绩 ###');
   const { data } = await call('POST', '/api/submit', { body: { nick: '奶蛙', score: 120 } });
   check('首次提交 120 分，名次 #1',
     data.ok === true && data.best === 120 && data.rank === 1, data);
-  check('新玩家领到编号 #1004（接在老玩家与 who 注册者后面）', data.pid === 1004, data);
+  check('新玩家领到编号 #10000005（接在老玩家与 who 注册者后面）', data.pid === 10000005, data);
 
   const { data: d2 } = await call('POST', '/api/submit', { body: { nick: '奶蛙', score: 80 } });
   check('低分不覆盖高分（只升不降）',
     d2.ok === true && d2.best === 120, d2);
-  check('重复提交编号不变（#1004 只发一次）', d2.pid === 1004, d2);
+  check('重复提交编号不变（#10000005 只发一次）', d2.pid === 10000005, d2);
 
   const { data: d3 } = await call('POST', '/api/submit', { body: { nick: '奶蛙', score: 300 } });
   check('高分正常刷新', d3.best === 300, d3);
 
   const { data: d4 } = await call('POST', '/api/submit', { body: { nick: '黄桃', score: 500 } });
   check('新玩家以 500 分拿到 #1', d4.rank === 1 && d4.best === 500, d4);
-  check('第二位新玩家编号顺延 #1005', d4.pid === 1005, d4);
+  check('第二位新玩家编号顺延 #10000006', d4.pid === 10000006, d4);
 }
 
 console.log('\n### 榜单 ###');
 {
   const { data } = await call('GET', '/api/rank?limit=10&nick=' + encodeURIComponent('奶蛙'));
-  check('按分数降序返回（含 who 注册的 0 分行共 5 行）',
-    data.list.length === 5
+  check('按分数降序返回（含 v1 平移号与 who 注册的 0 分行共 6 行）',
+    data.list.length === 6
     && data.list[0].nick === '黄桃' && data.list[0].rank === 1
     && data.list[1].nick === '奶蛙' && data.list[1].rank === 2
-    && data.list[2].nick === '老玩家乙' && data.list[3].nick === '老玩家甲'
-    && data.list[4].nick === '查无此人' && data.list[4].best === 0,
+    && data.list[2].nick === 'v1老号' && data.list[2].pid === 10000001
+    && data.list[3].nick === '老玩家乙' && data.list[4].nick === '老玩家甲'
+    && data.list[5].nick === '查无此人' && data.list[5].best === 0,
     data.list);
-  check('榜单每人带编号', data.list[0].pid === 1005 && data.list[1].pid === 1004, data.list);
+  check('榜单每人带编号', data.list[0].pid === 10000006 && data.list[1].pid === 10000005, data.list);
   check('带上我的名次', data.me && data.me.rank === 2 && data.me.best === 300, data.me);
-  check('我的名次也带编号', data.me && data.me.pid === 1004, data.me);
+  check('我的名次也带编号', data.me && data.me.pid === 10000005, data.me);
 
   const { data: d2 } = await call('GET', '/api/rank?limit=1&nick=' + encodeURIComponent('奶蛙'));
   check('榜单被截断时仍能算出榜外的名次',

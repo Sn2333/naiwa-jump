@@ -75,19 +75,25 @@ function ensureSchema(env) {
       ),
       env.DB.prepare('CREATE INDEX IF NOT EXISTS board_best_idx ON board (best DESC)'),
     ]);
-    /* pid：每个玩家的固定编号，从 1001 起发，永不重复、永不回收。
+    /* pid：每个玩家的固定编号，八位、从 10000001 起发，永不重复、永不回收。
      * 旧表没有这一列，ALTER 报「列已存在」就算迁移做过了，忽略。 */
     try {
       await env.DB.prepare('ALTER TABLE board ADD COLUMN pid INTEGER').run();
     } catch (e) { /* 列已存在 */ }
+    /* 编号规则 v1 是四位（1001 起），v2 改八位（10000001 起）。把老号整体平移
+     * （+10000000-1000 = +9999000），先后顺序不变：#1001 → #10000001。
+     * WHERE 条件不满足时是 0 行更新，幂等，每次冷启动跑一遍也无妨。 */
+    await env.DB.prepare(
+      'UPDATE board SET pid = pid + 9999000 WHERE pid IS NOT NULL AND pid < 10000000'
+    ).run();
     /* 给历史玩家补号：按首次上榜时间（updated_at 升序）发，先来的号小。
-     * 起点取 MAX(pid) 与 1000 的较大者 —— 以后加新玩家也从这里接着发。 */
+     * 起点取 MAX(pid) 与 10000000 的较大者 —— 以后加新玩家也从这里接着发。 */
     const { results } = await env.DB.prepare(
       'SELECT nick FROM board WHERE pid IS NULL ORDER BY updated_at ASC'
     ).all();
     if (results && results.length) {
       const mx = await env.DB.prepare('SELECT MAX(pid) AS m FROM board').first();
-      let next = Math.max(1000, (mx && mx.m) || 0);
+      let next = Math.max(10000000, (mx && mx.m) || 0);
       await env.DB.batch(results.map((r) =>
         env.DB.prepare('UPDATE board SET pid = ? WHERE nick = ? AND pid IS NULL')
           .bind(++next, r.nick)));
@@ -232,7 +238,7 @@ async function handleSubmit(request, env, cors) {
   /* 新面孔补发编号。MAX(pid)+1 写在 UPDATE 的子查询里，与赋值同一条语句完成 ——
    * D1 的写是串行的，两个新人同时提交，后一个事务能看到前一个刚发的号，不撞号。 */
   await env.DB.prepare(
-    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 1000) FROM board) + 1'
+    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 10000000) FROM board) + 1'
     + ' WHERE nick = ? AND pid IS NULL'
   ).bind(nick).run();
 
@@ -299,7 +305,7 @@ async function handleWho(url, env, cors) {
     + ' ON CONFLICT(nick) DO NOTHING'
   ).bind(rawNick, Date.now()).run();
   await env.DB.prepare(
-    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 1000) FROM board) + 1'
+    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 10000000) FROM board) + 1'
     + ' WHERE nick = ? AND pid IS NULL'
   ).bind(rawNick).run();
   const row = await env.DB.prepare('SELECT pid FROM board WHERE nick = ?')
