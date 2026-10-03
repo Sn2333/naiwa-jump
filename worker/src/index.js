@@ -279,11 +279,29 @@ async function handleRank(url, env, cors) {
   return json({ ok: true, list, me }, 200, cors);
 }
 
-/** 查某个昵称的编号。刚注册还没上过榜的玩家返回 pid:null（前端就先不显示#）。 */
+/** 查某个昵称的编号。查无此人时**当场注册**：往 board 插一行 0 分并发号 ——
+ * 「设了昵称但还没玩过一局」的玩家也要能在首页看到自己的 #号。
+ * 0 分玩家本来就可能出现在榜尾（submit 0 分合法），这里只是把时点提前，
+ * 语义不变；发号语句与 submit 共用同一套 MAX(pid)+1，不会撞号。 */
 async function handleWho(url, env, cors) {
   const rawNick = (url.searchParams.get('nick') || '').trim();
   const bad = checkNick(rawNick);
   if (bad) return json({ ok: false, msg: bad }, 400, cors);
+
+  const hit = await env.DB.prepare('SELECT pid FROM board WHERE nick = ?')
+    .bind(rawNick).first();
+  if (hit && hit.pid != null) {
+    return json({ ok: true, nick: rawNick, pid: hit.pid }, 200, cors);
+  }
+
+  await env.DB.prepare(
+    'INSERT INTO board (nick, best, updated_at) VALUES (?, 0, ?)'
+    + ' ON CONFLICT(nick) DO NOTHING'
+  ).bind(rawNick, Date.now()).run();
+  await env.DB.prepare(
+    'UPDATE board SET pid = (SELECT COALESCE(MAX(pid), 1000) FROM board) + 1'
+    + ' WHERE nick = ? AND pid IS NULL'
+  ).bind(rawNick).run();
   const row = await env.DB.prepare('SELECT pid FROM board WHERE nick = ?')
     .bind(rawNick).first();
   return json({ ok: true, nick: rawNick, pid: row ? row.pid : null }, 200, cors);

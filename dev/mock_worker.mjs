@@ -159,8 +159,12 @@ const server = http.createServer(async (req, res) => {
     const rawNick = (url.searchParams.get('nick') || '').trim();
     const bad = checkNick(rawNick);
     if (bad) return json(res, 400, { ok: false, msg: bad }, origin);
-    const v = board.get(rawNick);
-    return json(res, 200, { ok: true, nick: rawNick, pid: v ? (v.pid ?? null) : null }, origin);
+    /* 查无此人当场注册一行 0 分并发号 —— 与真 Worker 的 handleWho 语义一致 */
+    if (!board.has(rawNick)) {
+      board.set(rawNick, { best: 0, updated_at: Date.now(), pid: null });
+    }
+    const pid = ensurePid(rawNick);
+    return json(res, 200, { ok: true, nick: rawNick, pid }, origin);
   }
 
   // 测试用：清空榜单

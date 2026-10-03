@@ -575,8 +575,8 @@ if (location.search.indexOf('dbg') >= 0) {
     box-shadow: inset 0 0 0 1px var(--row-line);
   }
   .rankRow .no { width: 36px; text-align: center; font-weight: 800; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
-  .rankRow .nk { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rankRow .sc { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rankRow .nk { min-width: 0; }   /* 昵称完整显示不省略（上限 12 字，放得下） */
+  .rankRow .sc { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
   .rankRow.me {
     background: var(--row-me-bg);
     box-shadow: inset 0 0 0 1px var(--row-me-line);
