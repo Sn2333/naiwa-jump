@@ -297,11 +297,11 @@ g.setBoost(false);
 /* 7a3) 弹簧的下一块**不能太近**：站弹簧上最轻一跳也飞 minReach×1.92 远，
  *   生成器必须把间距下限抬到轻跳也飞不过头的位置，否则满射程必跳过 —— 物理无解 */
 const springGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
-const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.30;
+const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.15;
 const springGapOk = springGap >= springGapLo - 1e-6;
 g.fixedGap = savedGap7a;
 
-/* 7b) 粘液块 slime：射程倍率被砍（1 → (1-0.4)^2 = 0.36）。
+/* 7b) 粘液块 slime：射程倍率被砍（1 → (1-0.3)^2 = 0.49；0.40 时代是 0.36）。
  *   这套数值原封不动从"旧冰冰冰"（那会儿还叫冻结砖）搬过来的，只是换了砖种。 */
 g.setBoost(0);
 g.setSlime(SLIME_MAX);
@@ -532,7 +532,14 @@ const milkP = await landOnMilk();
 const milkLaughOff = { hits: laughHits, icon: !!milkP.icon };
 g.setSetting('laugh', true);
 await landOnMilk();
-const milkLaughOn = { hits: laughHits };
+/* ★ 2026-10-03 补的盲区：之前只数 laugh() 被调了几次，没验"真的能响"——
+ *   结果音源其实是套着 mp3 扩展名的 WMA，decodeAudioData 一直悄悄失败、
+ *   线上永远无声，探针却全绿。这里必须断言解码成功且 playClip 真的放出来。 */
+const milkLaughOn = {
+  hits: laughHits,
+  laughReady: !!(window.__sound.clips.laugh && window.__sound.clips.laugh.buf),
+  laughPlayed: window.__sound.laugh() === true,
+};
 g.forceTrait = null;
 
 /* ---------- 8) 装饰 / 角色：赠品不可买 → 装备 → 3D 生效 → 换角色 → 卸下 ---------- */
@@ -772,13 +779,15 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && boostAfterLand === 0 && landState === 'ready'             // ★ 离开弹簧 → 助推结束
   && boostOnSpring === 1                                       // 站在弹簧上 → 还有助推
   && springGapOk === true                                      // ★ 弹簧的下一块不能太近（轻跳也飞不过头）
-  && Math.abs(slimeMul - 0.36) < 1e-6                          // (1-0.4)^2
+  && Math.abs(slimeMul - 0.49) < 1e-6                          // (1-0.3)^2（0.40 时代是 0.36）
   && distSlimed < distNoBoost * 0.6                            // 射程真的被砍了
   && slimeOnBrick === 1                                        // 落上粘液 → +1 层
   && slimeGapOk === true                                       // ★ 粘液的下一块不能太远（满蓄力也够得着）
   && slimeAfterLeave === 0 && Math.abs(slimeRangeAfterLeave - 1) < 1e-6  // ★ 离开粘液 → 层数清零、射程复原
   && freezeLand.frozenT > 1.4 && freezeLand.flag === true      // 落上就被冻住，冰壳同步打开
   && freezeLand.dingReady === true && freezeLand.dingPlayed === true // 叮叮叮解码好且真的在放
+  && milkLaughOn.hits === 1                                    // 开关开 → 奶块落砖真的去调 laugh
+  && milkLaughOn.laughReady === true && milkLaughOn.laughPlayed === true // ★ 大笑音源解码成功且真的能放
   && freezePress.charging === false && freezePress.power === 0 // 冻住期间按不出蓄力
   && freezeThaw.frozenT === 0 && freezeThaw.flag === false     // 1.5s 后自动解冻
   && freezeAfterPress.charging === true                        // 解冻后真的能动了

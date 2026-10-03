@@ -26,7 +26,10 @@ OUT_JS = ROOT / "js" / "media_data.js"
 PREVIEW = ROOT / "assets" / "_pay_preview.png"
 
 SFX = [
-    ("LAUGH_URI", pathlib.Path(r"C:/Users/张/Downloads/纯音乐 - 奶龙大笑.mp3")),
+    # 2026-10-03 修复：Downloads 里那份"奶龙大笑.mp3"其实是**套着 mp3 扩展名的 WMA**
+    # （文件头 30 26 B2 75 = ASF 魔数），Chrome 的 decodeAudioData 不支持 WMA，
+    # 一直解码失败、奶块落地永远无声。已用 ffmpeg 转成真 mp3 收进项目资源目录。
+    ("LAUGH_URI", ROOT / "dev" / "assets" / "奶龙大笑_fixed.mp3"),
     # 2026-10-03：跳到冰冰冰时放的"叮叮叮"（用户音源，在 GameViewer 下载目录）
     ("DING_URI", pathlib.Path(r"C:/Program Files/Netease/GameViewer/Download/叮叮叮.mp3")),
 ]
