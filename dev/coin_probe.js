@@ -37,6 +37,7 @@ let g = window.__game;
 for (let i = 0; i < 60 && !g; i++) { await sleep(100); g = window.__game; }
 if (!g) return { ok: false, err: 'no game' };
 const CFG = window.__CFG || {};
+const accDef = (id) => (window.__acc && window.__acc.def ? window.__acc.def(id) : null);
 
 /* 上限从 CFG 现读，避免断言写死数字后改常量就静默失配。
  * ★ 弹簧现在**没有"层数"**了：助推只有"有 / 没有"两种，且只活一跳，
@@ -72,13 +73,16 @@ const notice = {
   /* 条目按"新的在前"排：第一条 = v1.1 更新说明（带正文），第二条 = 生日帽（无正文） */
   date: (document.querySelector('#noticeBody .noticeItem .noticeDate') || {}).textContent || '',
   title: (document.querySelector('#noticeBody .noticeItem .noticeTitle') || {}).textContent || '',
+  /* 置顶标：第一条（紧急通知）必须挂着「置顶」小红标（2026-10-04） */
+  pin: (document.querySelector('#noticeBody .noticeItem .noticeTitle .pinTag') || {}).textContent || '',
   firstBody: (document.querySelector('#noticeBody .noticeItem .noticeBody') || {}).textContent || '',
   items: document.querySelectorAll('#noticeBody .noticeItem').length,
   giftLine: (document.querySelector('#noticeBody .noticeGift') || {}).textContent || '',
   giftBtn: !!document.querySelector('#noticeBody .giftBtn'),
   ownedBefore: g.ownsAcc('hat_birthday'),
-  /* 第三条（生日帽）必须没有正文 —— 那篇的正文用户要自己写 */
-  thirdBody: !!(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[2]),
+  /* 第二条 = 新加的 v1.2 更新说明；第四条（生日帽）必须没有正文 —— 那篇的正文用户要自己写 */
+  secondTitle: (document.querySelectorAll('#noticeBody .noticeItem .noticeTitle')[1] || {}).textContent || '',
+  fourthBody: !!(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[3]),
 };
 /* 1b) 公告附赠：点「领取」→ 生日帽进拥有清单、判重键落盘、按钮切成"已领取"。
  *     ★ 生日帽已经**从商店下架**，公告是它唯一的来源，所以这条必须真跑通。 */
@@ -126,7 +130,22 @@ const shop = {
   charBuy: document.querySelectorAll('#shopShelf [data-buykey]').length,
   /* ★ 生日帽改成公告赠礼之后，商店里**一个字都不该出现** */
   hatGone: txt('shopShelf').indexOf('生日帽') < 0,
-  accHead: txt('shopShelf').indexOf('头饰') >= 0,   // 只有赠品装饰 → 整栏都不该有
+  /* 头饰 / 背饰两栏都在：光环与很冷的翅膀各 10 奶币，两侧价格按钮都能找到 */
+  accHead: txt('shopShelf').indexOf('头饰') >= 0,
+  accBack: txt('shopShelf').indexOf('背饰') >= 0,
+  accFx: txt('shopShelf').indexOf('特效') >= 0,
+  haloInShop: txt('shopShelf').indexOf('光环') >= 0,
+  wingInShop: txt('shopShelf').indexOf('很冷的翅膀') >= 0,
+  splashInShop: txt('shopShelf').indexOf('魔法阵') >= 0,           // 落地特效上架
+  /* ★ 旧「水花」已按要求整体删除 —— 商店里不该再有那两个字 */
+  splashGone: txt('shopShelf').indexOf('水花') < 0,
+  accBuy10: document.querySelectorAll('#shopShelf [data-buy="halo"], #shopShelf [data-buy="wing"]').length,
+  splashBuy: document.querySelectorAll('#shopShelf [data-buy="fx_magic"]').length,
+  /* ★ fx 类没有贴图 —— 不能渲染出一个 src="" 的碎图 img */
+  splashIcoIsDiv: document.querySelectorAll('#shopShelf [data-buy="fx_magic"]').length === 1
+    && [...document.querySelectorAll('#shopShelf .shopItem')]
+      .filter((it) => it.textContent.indexOf('魔法阵') >= 0)
+      .every((it) => it.querySelector('.shopIco.fxico') && !it.querySelector('img.shopIco')),
   price50: txt('shopShelf').indexOf('50') >= 0,     // 大笑奶蛙 50
 };
 document.getElementById('shopClose').click();
@@ -164,7 +183,9 @@ g.botPress();
 step(150);
 const coinPick2 = { runCoins: g.runCoins, tag: txt('runCoinTag') };
 
-/* 3d) 结算：把分数拉满也不该多给一枚 —— 奶币只认"捡到的枚数" */
+/* 3d) 结算：捡到的枚数 ×(coinPerPick) 入账，同时每枚给分数外加 coinBonusPoint
+ *     ★ 这里故意把 g.score 拉到 999 再结算 —— 金币入账**不该**受分数影响，
+ *       但分数**要**因为捡币而变多（999 + 2×5 = 1009）。两件事必须同时成立。 */
 g.score = 999;
 g.gameOver();
 await sleep(150);
@@ -172,7 +193,11 @@ const settle = {
   coins: g.coins,                              // 7 + 2×10 = 27
   runCoins: g.runCoins,                        // 2
   perPick: CFG.coinPerPick || 10,
+  bonus: CFG.coinBonusPoint || 5,
+  score: g.score,                              // ★ 999 + 2×5 = 1009
   overCoin: txt('overCoin'),
+  overCoinPoint: txt('overCoinPoint'),         // ★ 加分明细行
+  overCoinPointShown: show('overCoinPoint'),
   stored: localStorage.getItem('jump3d_coins'),
   tag: txt('coinTag'),                         // 同上：只剩数字
   tagIco: document.querySelectorAll('#coinTag .coinIco').length,
@@ -509,6 +534,19 @@ const milkLaughOn = {
 };
 g.forceTrait = null;
 
+/* 7f2) 音效本身的两条硬指标（2026-10-04 用户要求）：
+ *   · 大笑只保留**前四秒** —— 原音源 9.98s，落在奶块上会一直笑
+ *   · 大笑 / 叮叮叮的音量再调低（真实录音比合成音效响得多）
+ *  直接读解码后的 AudioBuffer 时长与源码里的音量参数，不靠"听起来差不多"。 */
+const laughBuf = window.__sound.clips.laugh && window.__sound.clips.laugh.buf;
+const dingBuf = window.__sound.clips.ding && window.__sound.clips.ding.buf;
+const clipInfo = {
+  laughDur: laughBuf ? +laughBuf.duration.toFixed(2) : null,
+  dingDur: dingBuf ? +dingBuf.duration.toFixed(2) : null,
+  laughVol: (window.__clipVol && window.__clipVol.laugh) || null,
+  dingVol: (window.__clipVol && window.__clipVol.ding) || null,
+};
+
 /* 7g) 圣光砖整体删除（2026-10-04）：配置项没了，抽签池里也不该再出现。
  *   跑一批 spawnNext 实测 —— 池子里要是还留着 holy，120 次几乎必然撞到（原概率 0.035）。
  *   ★ 不重置局内状态：这段夹在别的用例中间，backToTitle/beginRun 会污染后面的用例。 */
@@ -528,6 +566,115 @@ const holyGone = {
   seen: holySeen,
   pool: [...traitPool].sort().join(','),
 };
+
+/* ---------- 7i) FOV 40：画面缩小 = 视野扩大（2026-10-04） ---------- */
+const fovNow = window.__CFG.fov;
+
+/* ---------- 7j) MJ 砖 + 蜘蛛奶抓人 ----------
+ * ① 砖上真的立着 M/J 点阵字母（BoxGeometry 粒数：M 13 + J 9 = 22）
+ * ② 落砖 → mjTimer 武装；离开脚下砖 → 计时作废
+ * ③ 站满 1s → mjgrab 演出（drop→grab→rise→land 全由 tick 推进）
+ * ④ 被放回后方第 3 块砖（不足取最近）+ next 重排 + 覆盖层收干净
+ * ★ forceTrait 绕过 plain 模式（抽签链根本不进），?plain 的探针 URL 也能造出 MJ 砖。 */
+g.forceTrait = 'mj';
+g.backToTitle();
+await sleep(140);
+g.beginRun();
+await sleep(180);
+g.spawnNext();
+const mjP = g.platforms[g.platforms.length - 1];
+let mjCubeCount = 0;
+mjP.group.traverse((o) => {
+  if (o.isMesh && o.geometry && o.geometry.type === 'BoxGeometry') mjCubeCount++;
+});
+mjP.radius = 0.8; mjP.hitRadius = 0.8;
+g.next = mjP;
+g.charRoot.position.set(mjP.center.x, 0, mjP.center.z);
+g.state = 'jumping';
+g.current.center.x += 6;        // 否则 finishJump 第一分支判成"原地跳"
+g.finishJump();
+const mjIdx = g.platforms.indexOf(mjP);
+const mjArmed = {
+  trait: mjP.trait,
+  state: g.state,
+  timer: g.mjTimer == null ? null : +g.mjTimer.toFixed(2),
+  letters: mjCubeCount,
+  idx: mjIdx,
+};
+/* tick 推进 1.2s（> mjDwell 1.0s）→ 蜘蛛登场 */
+const mjTickOnce = () => { g._noRender = true; g.tick(0.05); g._noRender = false; };
+for (let i = 0; i < 24 && g.state !== 'mjgrab'; i++) mjTickOnce();
+for (let i = 0; i < 4 && g.state === 'mjgrab'; i++) mjTickOnce();   // 再走几帧看 DOM
+const mjDrop = {
+  state: g.state,
+  phase: g.mj ? g.mj.phase : null,
+  layerShown: g.dom.mjLayer.classList.contains('show'),
+  spiderTop: g.dom.mjSpider.style.top || null,       // 蜘蛛 DOM 真的在被驱动
+  silkH: g.dom.mjSilk.style.height || null,
+};
+/* mjgrab 期间 press() 必须无效 */
+g.press();
+const mjPressBlocked = g.state === 'mjgrab';
+/* 推完整场演出（0.7+0.25+0.6+落体 ≈ 1.8s，0.05×80=4s 余量） */
+for (let i = 0; i < 80 && g.state === 'mjgrab'; i++) mjTickOnce();
+const mjDone = {
+  state: g.state,
+  layerGone: !g.dom.mjLayer.classList.contains('show'),
+  curIdx: g.platforms.indexOf(g.current),
+  backOk: g.platforms.indexOf(g.current) === Math.max(0, mjIdx - 3),
+  nextIsMj: g.next === g.platforms[g.platforms.indexOf(g.current) + 1],
+  charVisible: g.charRoot.visible,
+  blobVisible: g.blob.visible,
+  mjCleared: g.mj === null,
+};
+/* 计时守卫：站在 MJ 砖上才倒数，离开脚下砖即作废 */
+g.current.trait = 'mj'; g.mjTimer = 0.4;
+mjTickOnce();
+const mjKeepOnBrick = g.mjTimer != null;
+g.current.trait = null;
+mjTickOnce();
+const mjLeaveCancels = g.mjTimer === null;
+const mjCancel = { keepOnBrick: mjKeepOnBrick, leaveCancels: mjLeaveCancels };
+
+/* ---------- 7k) 奶块大笑 GIF ----------
+ * 笑声的同时砖上方浮出大笑奶蛙动图：Sprite、独立纹理实例（不与角色雪碧图
+ * 共用 → 无 UV 冲突）、雪碧图切帧中（repeat<1）、播完（4.2s）自清。 */
+/* 清掉早前奶块用例留下的 GIF，不然新旧难分 */
+for (const f of g.fx.filter((f) => f.kind === 'gif')) {
+  g.scene.remove(f.mesh);
+  f.mesh.material.map.dispose();
+  f.mesh.material.dispose();
+  g.fx.splice(g.fx.indexOf(f), 1);
+}
+g.forceTrait = 'milk';
+g.backToTitle();
+await sleep(140);
+g.beginRun();
+await sleep(180);
+g.spawnNext();
+const milkP2 = g.platforms[g.platforms.length - 1];
+milkP2.radius = 0.8; milkP2.hitRadius = 0.8;
+g.next = milkP2;
+g.charRoot.position.set(milkP2.center.x, 0, milkP2.center.z);
+g.state = 'jumping';
+g.current.center.x += 6;
+laughHits = 0;
+g.finishJump();
+const gifFx = g.fx.find((f) => f.kind === 'gif');
+const gif = {
+  laughHits,
+  hasGif: !!gifFx,
+  isSprite: gifFx ? gifFx.mesh.isSprite : null,
+  life: gifFx ? +gifFx.life.toFixed(2) : null,
+  max: gifFx ? +gifFx.max.toFixed(2) : null,
+  ownTex: gifFx ? gifFx.mesh.material.map !== g.character.tex : null,   // ★ 独立实例
+  repeatW: gifFx ? +gifFx.mesh.material.map.repeat.x.toFixed(4) : null, // <1 = 切帧中
+  opacity: gifFx ? +gifFx.mesh.material.opacity.toFixed(2) : null,
+  aboveChar: gifFx ? gifFx.mesh.position.y > g.character.height : null,
+};
+for (let i = 0; i < 100 && g.fx.some((f) => f.kind === 'gif'); i++) mjTickOnce();
+const gifGone = { left: g.fx.filter((f) => f.kind === 'gif').length };
+g.forceTrait = null;
 
 /* 7h) 角色体积缩小：所有角色按 character.js 的 CFG.height 统一高度，现在封顶 1.48
  *   （原 1.62）。过宽角色会等比缩小，所以 h ≤ 1.48、w ≤ h 都要成立。 */
@@ -549,40 +696,285 @@ const noticeBuy = {
 };
 
 /* 8b) 装备 → 3D 角色上真的挂上了，且位置在头顶之上、尺寸与角色身高成比例 */
+/* 尺寸断言必须按**内容框**算：画布是正方形的，但装饰主体只占其中一块
+ * （光环的内容框只有画布高的 48%），所以"画布高 / 角色高"并不等于 hK ——
+ * 要乘回 box.h 才是本体高。 */
+const accContentH = (mesh, deco) => {
+  const boxes = (window.__acc && window.__acc.box) || {};
+  const box = boxes[deco.img] || { h: 1 };
+  return mesh.scale.y * (box.h || 1);
+};
+/* 内容**宽度**同理（背饰这类"宽扁"素材最容易在这一维翻车：冰晶内容框宽高比 1.63，
+ * hK 稍大一点内容宽度就失控，整组从"背上的翅膀"变成"横着摊开的冰环"）。 */
+const accContentW = (mesh, deco) => {
+  const boxes = (window.__acc && window.__acc.box) || {};
+  const box = boxes[deco.img] || { w: 1 };
+  return mesh.scale.x * (box.w || 1);
+};
 g.equipAcc('head', accId);
 await sleep(400);                                       // 等头饰贴图解码 + 定位
 const ch = g.character;
+const accHead = ch.accLayer.head;
 const headTopY = ch.mesh.position.y + ch.height / 2 - ch.headAnchor().ny * ch.height;
 const equipped = {
-  id: ch.accId, visible: ch.acc.visible,
+  id: ch.accIds.head, visible: accHead.visible,
   stored: localStorage.getItem('jump3d_acc_head'),
-  scale: +ch.acc.scale.x.toFixed(3),
+  scale: +accHead.scale.x.toFixed(3),
   /* 头饰中心必须落在头顶之上（dy 为正） */
-  aboveHead: ch.acc.position.y > headTopY,
-  /* 贴图是正方形画布、内容框 h=1，所以画布高就是帽子本体高 */
-  relHeight: +(ch.acc.scale.y / ch.height).toFixed(3),           // 本体高/角色高 ≈ hK
+  aboveHead: accHead.position.y > headTopY,
+  /* 头饰要在立绘前面（z 为正） */
+  inFront: accHead.position.z > 0,
+  relHeight: +(accContentH(accHead, accDef(accId)) / ch.height).toFixed(3),   // ≈ hK
 };
 
-/* 8c) 角色面板里的头饰行：已存在，这里只验"选中态"跟着走 */
+/* 8b2) 光环（10 奶币）：走同一套头饰槽位，买了能戴、位置在头顶之上 */
+g.coins = 100;
+const haloErr = g.buyAcc('halo');
+const haloBought = {
+  err: haloErr, coins: g.coins, owned: g.ownsAcc('halo'),
+  price: accDef('halo').price,
+  stored: JSON.parse(localStorage.getItem('jump3d_acc_owned') || '[]').includes('halo'),
+};
+g.equipAcc('head', 'halo');
+await sleep(400);
+const haloEq = {
+  id: ch.accIds.head, visible: ch.accLayer.head.visible,
+  aboveHead: ch.accLayer.head.position.y > headTopY,
+  relHeight: +(accContentH(ch.accLayer.head, accDef('halo')) / ch.height).toFixed(3),  // ≈ 0.30
+};
+
+/* 8b3) 很冷的翅膀（10 奶币）：**独立背饰槽位** —— 与头饰同时存在、互不顶替，
+ *      且垫在角色后面（z 为负），不会被身体挡住。 */
+const wingErr = g.buyAcc('wing');
+g.equipAcc('back', 'wing');
+await sleep(400);
+const wingEq = {
+  err: wingErr, owned: g.ownsAcc('wing'),
+  price: accDef('wing').price,
+  cat: accDef('wing').cat,
+  id: ch.accIds.back, visible: ch.accLayer.back.visible,
+  /* 两槽共存：头饰还戴着，背饰也戴着 */
+  headStillOn: ch.accIds.head === 'halo',
+  behind: ch.accLayer.back.position.z < 0,          // 垫在身后
+  underHead: ch.accLayer.back.renderOrder < 0,      // 先画（在角色之下）
+  /* ★ 背饰必须挂在"上背"而不是飘在头顶之上：它的下沿要低于头顶。
+   *   第一版按画布中心摆，翅膀直接飞到了脑袋上面（截图一眼假）。 */
+  belowHead: (ch.accLayer.back.position.y - ch.accLayer.back.scale.y / 2) < headTopY,
+  relHeight: +(accContentH(ch.accLayer.back, accDef('wing')) / ch.height).toFixed(3),  // ≈ hK = 1.05
+  /* ★ 宽度也要卡住：冰晶贴图是"宽扁"内容框（宽高比 1.63），hK 给大了宽度会失控。
+   *   ★ 分母用**角色高**而不是角色宽 —— 装饰尺寸本来就按"角色高 × hK"定（见
+   *     _layoutSlot），所以"宽 / 角色高"才是与角色体型无关的**不变量**；
+   *     换成"宽 / 角色宽"会随角色 aspect 大幅波动（兔子 aspect 0.54、假日威龙奶 1.10），
+   *     同一个翅膀在两只身上算出两个数，卡不住。
+   *   期望 ≈ 1.46（内容 2.17 世界单位 / 角色高 1.48），范围 1.2~1.8 ——
+   *   下限防止又缩回"被身体挡住"，上限防止又"横着摊开"。 */
+  relWidth: +(accContentW(ch.accLayer.back, accDef('wing')) / ch.height).toFixed(2),
+  stored: localStorage.getItem('jump3d_acc_back'),
+};
+
+/* 8c) 角色面板仓库行：两行（头饰 / 背饰）。**已拥有的不显示价格、未拥有的低亮 + 价签**
+ *     —— 这条是玩家反馈的直接验收点，价格只能出现在 locked 的格子里。 */
+g.openCharPanel();
+await sleep(200);
+const accCells = [...document.querySelectorAll('#accBar .accCell')];
+const accRows = [...document.querySelectorAll('#accBar .accRow')];
+const ownedWithPrice = accCells.filter((c) => {
+  const id = c.dataset.id;
+  return id && g.ownsAcc(id) && c.querySelector('.accPrice');
+});
+const lockedWithoutPrice = accCells.filter((c) => {
+  const id = c.dataset.id;
+  return id && !g.ownsAcc(id) && !c.querySelector('.accPrice');
+});
 const accRowOn = document.querySelector('#accBar .accCell.on');
 const panelAcc = {
-  cells: document.querySelectorAll('#accBar .accCell').length,
+  rows: accRows.length,                              // 期望 3（头饰 + 背饰 + 特效）
+  rowNames: accRows.map((r) => r.querySelector('h4').textContent).join(','),
+  cells: accCells.length,
+  ownedWithPrice: ownedWithPrice.length,             // 期望 0：拥有的一律不标价
+  lockedWithoutPrice: lockedWithoutPrice.length,     // 期望 0：未拥有的一律有价签
+  wingCell: !!accCells.find((c) => c.dataset.id === 'wing'),   // 很冷的翅膀在仓库里可见
+  haloCell: !!accCells.find((c) => c.dataset.id === 'halo'),
+  /* fx 类也有格子（否则玩家不知道去哪儿买落地特效）；未拥有 → 有价签 + 不带贴图 */
+  splashCell: !!accCells.find((c) => c.dataset.id === 'fx_magic'),
+  splashLocked: (() => {
+    const c = accCells.find((x) => x.dataset.id === 'fx_magic');
+    return !!c && c.classList.contains('locked') && !!c.querySelector('.accPrice')
+      && !!c.querySelector('.accThumb.fxico') && !c.querySelector('img');
+  })(),
   onId: accRowOn ? accRowOn.dataset.id : null,
   locked: document.querySelectorAll('#accBar .accCell.locked').length,
 };
+g.closeCharPanel();
 
-/* 8d) 换角色：装饰要跟着走（通用装饰的意义就在这里） */
+/* 8d) 换角色：装饰要跟着走（通用装饰的意义就在这里 —— 头饰背饰都在） */
 g.pickChar('rabbit');
 await sleep(400);
-const afterSwap = { id: g.character.accId, visible: g.character.acc.visible };
+const afterSwap = {
+  head: g.character.accIds.head, headVisible: g.character.accLayer.head.visible,
+  back: g.character.accIds.back, backVisible: g.character.accLayer.back.visible,
+};
 
-/* 8e) 卸下：visible 归假、存档清掉 */
+/* 8e) 卸下：visible 归假、存档清掉（只摘头饰，背饰不受影响） */
 g.equipAcc('head', null);
 await sleep(120);
 const unequipped = {
-  id: g.character.accId, visible: g.character.acc.visible,
+  id: g.character.accIds.head, visible: g.character.accLayer.head.visible,
   stored: localStorage.getItem('jump3d_acc_head'),
+  backKept: g.character.accIds.back === 'wing' && g.character.accLayer.back.visible,
 };
+
+/* ---------- 8e2) 落地特效「魔法阵」：买 → 装 → 落地真出阵 → 卸下就不出 ----------
+ * ★ 这是第三类装饰（cat='fx'），且在 2026-10-04 第十九段把原来的「水花」换成了它。
+ *   它和其他装饰根本不同：**没有 3D 贴图**，不进 character 的槽位，而是 game.js
+ *   在落地瞬间读 accEquip.fx 决定要不要在脚下铺一圈魔法阵。
+ *   所以这里必须验三件事，缺一件都可能"看着装上了其实没反应"：
+ *     1) 它不能建出 mesh（组装饰时 setAccessory 对 fx 槽必须安全返回）；
+ *     2) 装上后落地，this.fx 里真的多出魔法阵图层（外圈+内圈+阵眼+6根射线，共 9 片）；
+ *     3) 卸下后再落地，fx 数回到基线 —— 否则就是"装上就再也关不掉"。 */
+const fxId = 'fx_magic';
+g.coins = 200;
+try { localStorage.setItem('jump3d_coins', String(g.coins)); } catch (e) { /* 忽略 */ }
+const splashBuyErr = g.buyAcc(fxId);
+const splashBought = {
+  err: splashBuyErr, owned: g.ownsAcc(fxId),
+  stored: JSON.parse(localStorage.getItem('jump3d_acc_owned') || '[]'),
+  /* fx 槽不该有 mesh：装了也不该往 character 上挂任何东西 */
+  noMesh: !g.character.accLayer.fx,
+};
+/* 装备 + 同步一次 → accEquip.fx 与 hasFx() 都要对上 */
+g.equipAcc('fx', fxId);
+await sleep(120);
+const splashEquipped = {
+  equipped: g.accEquip.fx,
+  stored: localStorage.getItem('jump3d_acc_fx'),
+  hasFx: g.hasFx('magic'),
+  notOther: g.hasFx('nonexist') === false,
+  /* 装了特效也不该影响头饰 / 背饰这两个真槽位 */
+  headKept: g.character.accLayer.head !== undefined,
+};
+/* 落地一次：数 fx 数组的涨落。基线先量一次（清空现有特效） */
+const clearFx = () => { for (const f of g.fx) { g.scene.remove(f.mesh); } g.fx.length = 0; };
+clearFx();
+g.landmagic(new window.__THREE.Vector3(0, 0, 0));
+const splashParticles = g.fx.length;
+const splashAfterOne = {
+  count: splashParticles,
+  ring: g.fx.filter((f) => f.kind === 'ring').length,
+  magic: g.fx.filter((f) => f.kind === 'magic').length,
+  /* 魔法阵是平铺在地上的：所有图层都该是贴地平面（rotation.x ≈ -90°），y 很小 */
+  lowStart: g.fx.filter((f) => f.kind === 'magic').every((f) => f.mesh.position.y < 0.2),
+  /* 生命要短：这是"短暂落地特效"，最长也别超过 1 秒 */
+  shortLife: g.fx.every((f) => f.max <= 1.0),
+  /* ★ 魔法阵图层：外圈/内圈是环（RingGeometry），阵眼是圆（CircleGeometry）
+   *  或射线是面片（PlaneGeometry）—— 总之都必须是**平面几何**，不是立方体。 */
+  flats: g.fx.filter((f) => f.kind === 'magic')
+    .every((f) => ['RingGeometry', 'CircleGeometry', 'PlaneGeometry'].includes(f.mesh.geometry.type)),
+  /* ★ 会旋转：每片都记了初始角 rot0，且 spin 非 0 —— 静止的阵看着像贴纸 */
+  spinning: g.fx.filter((f) => f.kind === 'magic').some((f) => f.spin && f.spin !== 0),
+};
+clearFx();
+/* 卸下 → hasFx 假 → 不再铺阵 */
+g.equipAcc('fx', null);
+await sleep(80);
+const splashOff = {
+  equipped: g.accEquip.fx || null,
+  hasFx: g.hasFx('magic'),
+  stored: localStorage.getItem('jump3d_acc_fx'),
+  /* 卸下之后，落地分支里的 hasFx 判定为假，fx 数组不该再增长 */
+  grow: (() => { clearFx(); if (g.hasFx('magic')) g.landmagic(new window.__THREE.Vector3(0, 0, 0)); return g.fx.length; })(),
+};
+clearFx();
+/* 8e3) 端到端：真的走一次 finishJump 落地分支 —— 这是"接没接上"的唯一硬证据。
+ *      landmagic() 单测能过，但 finishJump 里 hasFx 判断写错（读错槽位 /
+ *      压根没调）照样绿。所以这里关掉特效跳一次、开着特效跳一次，比 fx 峰值。
+ *      ★ 全程用 step() 手动推进（不 await），否则 400+ 帧的 await 会让探针超时。 */
+g.equipAcc('fx', null);
+await sleep(80);
+document.getElementById('startBtn').click();
+await sleep(450);
+clearFx();
+g.botPress();
+/* ★ 量的是**峰值**而不是终值：落地那一帧除了魔法阵，本来就会撒一把
+ *  原版的落地尘土（dust），它们要好几帧才淡完 —— 取终值会把尘土算进来，
+ *   于是"没装备特效"也变成 40，断言永远假红。魔法阵是**额外**多出来的那一批，
+ *   所以关/开两次的峰值之差才是"魔法阵真的接上了"的证据。
+ * ★ 帧数要**刚好**够：落地（≈40 帧）后再跑满特效寿命（0.92s≈57 帧），
+ *   一共 110 帧就能"看到峰值 + 看到它自己淡完"。跑 220×2 会让
+ *   Runtime.evaluate 撞 60s 超时（本探针已有 46 段 await sleep）。 */
+const runJumpFrames = () => {
+  let peak = 0;
+  /* ★ 必须关渲染（_noRender）：无头软件 WebGL 里每帧 render 要上百毫秒，
+   *   跑 130 帧就该 10s+，两趟直接把 Runtime.evaluate 顶到超时。
+   *   这里只推进物理（魔法阵的 life/scale/opacity 都在 tick 里算），
+   *   画面交给一直在跑的 rAF 循环出。 */
+  g._noRender = true;
+  let landed = false;
+  for (let i = 0; i < 130; i++) {
+    g.tick(0.016);
+    peak = Math.max(peak, g.fx.length);
+    if (!landed && g.state === 'ready' && i > 20) landed = true;
+    if (landed && i > 0 && g.fx.length === 0) break;
+  }
+  g._noRender = false;
+  return peak;
+};
+let splashE2eOffPeak = runJumpFrames();
+const splashE2eOff = { peak: splashE2eOffPeak, fx: g.fx.length };
+/* 装上再跳一次：落地那一瞬必须铺出完整一圈（峰值 9 片以上） */
+g.equipAcc('fx', fxId);
+await sleep(120);
+for (let i = 0; i < 80 && g.state !== 'ready'; i++) g.tick(0.016);
+clearFx();
+g.botPress();
+const splashE2ePeak = runJumpFrames();
+const splashE2e = {
+  off: splashE2eOff.peak, peak: splashE2ePeak, after: g.fx.length,
+  hasFx: g.hasFx('magic'),
+};
+clearFx();
+/* 收尾：把魔法阵装回去，方便后面截图看效果；金币交还给后续用例 */
+g.coins = 7;
+try { localStorage.setItem('jump3d_coins', String(g.coins)); } catch (e) { /* 忽略 */ }
+
+/* 8f0) 后加的免费角色：奶霸 / 小奶比耶 / 托脸奶蛙 / 假日威龙奶，以及
+ *      2026-10-04 第十八段新增的 奶罐 / 隐忍奶蛙 / 超长长长奶蛙（其中超长长长奶蛙
+ *      是「经典奶蛙横向压扁到 0.34」派生出来的，sprite_data.js 靠 --only 重建，
+ *      最容易出的错就是"贴图生成了但没进 CHARS"→ 格子静默少一只。这里**逐个点名**。
+ *      免费角色（price 0）在面板里直接可选、不挂价签。 */
+const newCharSpec = [
+  ['boss', '奶霸'], ['peace', '小奶比耶'],
+  ['think', '托脸奶蛙'], ['holiday', '假日威龙奶'],
+  ['milkjar', '奶罐'], ['endure', '隐忍奶蛙'], ['skinny', '超长长长奶蛙'],
+];
+g.openCharPanel();
+await sleep(200);
+const newChars = newCharSpec.map(([k, want]) => {
+  const cell = document.querySelector(`#charGrid .charCell[data-key="${k}"]`);
+  const def = window.__chars ? window.__chars.def(k) : null;
+  return {
+    key: k,
+    cell: !!cell,
+    name: def ? def.name : null,
+    nameOk: def ? def.name === want : false,
+    price: def ? (def.price || 0) : -1,
+    locked: cell ? cell.classList.contains('locked') : null,   // 免费 → 不该 locked
+    priceTag: cell ? !!cell.querySelector('.charLock') : null, // 免费 → 不该有价签
+    label: cell ? cell.querySelector('span').textContent.trim() : '',
+  };
+});
+const charTotal = document.querySelectorAll('#charGrid .charCell').length;
+/* ★ 经典奶蛙（初始角色）必须排在**第一格** —— 用户 2026-10-04 要求它置顶。
+ *  以前它排在列表尾巴上，是因为派生角色 skinny 复制了它的写法被随手塞在末尾，
+ *  搬 CHARS 时把它一起带下去了。这条断言防回归。 */
+const firstChar = document.querySelector('#charGrid .charCell');
+const frogFirst = !!(firstChar && firstChar.dataset.key === 'frog');
+/* ★ 奶怒2 的贴图曾经是 0 字节 webp（转码那次静默失败）→ uri 变成空 base64，
+ *  格子里是一片空白。这里直接查它拿到的贴图 data URI 长度，空了就红。 */
+const angry2Def = window.__chars ? window.__chars.def('angry2') : null;
+const angry2UriLen = angry2Def && angry2Def.uri ? angry2Def.uri.length : 0;
+g.closeCharPanel();
+await sleep(150);
 
 /* ---------- 8f) 角色买卖 + 动图角色（大笑奶蛙 50 奶币） ---------- */
 /* 钱不够：拒绝，余额和拥有清单都不许动 */
@@ -762,13 +1154,15 @@ const pidTagOut = await pidTag;
 
 /* 落正中心 = perfect：base 1 + 连击 1 的 2 分 = 3，×2 之后必须是 6 */
 const ok = dotOn === true && notice.panel === true && notice.dot === false
-  /* 三条公告：紧急通知（带正文）→ v1.1（带正文）→ 生日帽（无正文） */
-  && notice.hasPanel === true && notice.items === 3
+  /* 四条公告：紧急通知(置顶·带正文)→ v1.2(带正文) → v1.1（带正文）→ 生日帽（无正文） */
+  && notice.hasPanel === true && notice.items === 4
   && notice.date.indexOf('2026-10-03') >= 0
   && notice.title.indexOf('紧急通知') >= 0
+  && notice.pin === '置顶'                            // ★ 紧急公告挂置顶标（且排第一：date 断言已卡）
+  && notice.secondTitle.indexOf('v1.2') >= 0          // ★ 新公告插在置顶之后、v1.1 之前
   && notice.firstBody.indexOf('浏览器缓存') >= 0 && notice.firstBody.indexOf('建议使用浏览器') >= 0
   && notice.firstBody.indexOf('特此通知') >= 0
-  && notice.thirdBody === false
+  && notice.fourthBody === false
   && notice.giftLine.indexOf('生日帽') >= 0 && notice.giftBtn === true
   && notice.ownedBefore === false                     // 弹出来的时候还没领
   /* 领完：进拥有清单、按钮切"已领取"且禁用、判重键落盘、重复触发幂等 */
@@ -777,13 +1171,20 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && gift.keys.indexOf('2026-10-02:hat_birthday') >= 0
   && giftAgain.owned === true && giftAgain.keys === gift.keys.length
   && noticeClosed.panel === false && noticeClosed.dot === false
-  && noticeClosed.seen === '5'                 // NOTICE_VERSION 变了这里要跟着改
+  && noticeClosed.seen === '6'                 // NOTICE_VERSION 变了这里要跟着改
   && noticeClosed.hasPanel === false
   && noticeAgain === false
-  /* 商店：生日帽已下架，只剩"角色"一栏、放着 50 奶币的大笑奶蛙 */
+  /* 商店：生日帽已下架；角色栏放着 50 奶币的大笑奶蛙；装饰栏有头饰 + 背饰 */
   && shop.panel === true && shop.hasPanel === true && shop.coins === '7'
-  && shop.coinIco === 1 && shop.hatGone === true && shop.accHead === false
-  && shop.heads === '角色' && shop.charBuy === 1 && shop.price50 === true
+  && shop.coinIco === 1 && shop.hatGone === true
+  && shop.accHead === true && shop.accBack === true                 // 两个装饰分类都在
+  && shop.accFx === true                                            // ★ 第三类"特效"也上架了
+  && shop.haloInShop === true && shop.wingInShop === true           // 光环 / 冰锥翅膀上架
+  && shop.splashInShop === true && shop.splashBuy === 1             // 魔法阵 10 奶币 + 一个价格按钮
+  && shop.splashGone === true                                       // ★ 旧「水花」已删，商店里不该有
+  && shop.splashIcoIsDiv === true                                   // ★ 无贴图不渲染碎图 img
+  && shop.accBuy10 === 2                                            // 两件都还没买 → 各一个价格按钮
+  && shop.charBuy === 1 && shop.price50 === true
   && shopClosed.panel === false && shopClosed.hasPanel === false
   /* 玩家编号：userTag 与榜单行的昵称后面都要缀半透明 #10000001 */
   && pidTagOut.tagText === '#10000001'
@@ -801,6 +1202,10 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && settle.runCoins === 2 && settle.coins === coinsStart + 2 * settle.perPick
   && settle.stored === String(settle.coins)
   && settle.overCoin.indexOf(`+${2 * settle.perPick}`) >= 0
+  /* ★ 结算时局内拾取的奶币每枚加 coinBonusPoint 分：999 + 2×5 = 1009 */
+  && settle.bonus === 5 && settle.score === 999 + 2 * settle.bonus
+  && settle.overCoinPointShown === true
+  && settle.overCoinPoint.indexOf('+10') >= 0 && settle.overCoinPoint.indexOf('2') >= 0
   && settle.tag === String(settle.coins) && settle.tagIco === 1
   && loopGuard.injected >= 3 && loopGuard.advanced > 0.25
   && fragile.trait === 'fragile' && fragile.state === 'ready' && fragile.armed === true
@@ -810,14 +1215,14 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && fragileCleaned.inList === false
   && dbl.trait === 'double' && dbl.state === 'ready' && dbl.gained === 6
   /* —— 特殊效果砖 —— */
-  && Math.abs(boostIdle - 1) < 1e-6 && Math.abs(boostAfter - (1 + CFG.boostRange)) < 1e-6 // 1 + 0.25
+  && Math.abs(boostIdle - 1) < 1e-6 && Math.abs(boostAfter - (1 + CFG.boostRange)) < 1e-6 // 1 + 0.50
   && buffTagShown === true && buffTagText.indexOf('弹簧') >= 0
-  && distBoosted > distNoBoost * 1.2                           // 那一跳真的更远（射程 ×1.25）
+  && distBoosted > distNoBoost * 1.4                           // 那一跳真的更远（射程 ×1.50）
   && boostAfterLand === 0 && landState === 'ready'             // ★ 离开弹簧 → 助推结束
   && boostOnSpring === 1                                       // 站在弹簧上 → 还有助推
   && springGapOk === true                                      // ★ 弹簧的下一块不能太近（轻跳也飞不过头）
-  && Math.abs(slimeMul - 0.5625) < 1e-6                        // (1-0.25)^2（0.30 时代 0.49，0.40 时代 0.36）
-  && distSlimed < distNoBoost * 0.6                            // 射程真的被砍了
+  && Math.abs(slimeMul - 0.25) < 1e-6                          // (1-0.50)^2
+  && distSlimed < distNoBoost * 0.35                           // 射程真的被砍掉一大半
   && slimeOnBrick === 1                                        // 落上粘液 → +1 层
   && slimeGapOk === true                                       // ★ 粘液的下一块不能太远（满蓄力也够得着）
   && slimeAfterLeave === 0 && Math.abs(slimeRangeAfterLeave - 1) < 1e-6  // ★ 离开粘液 → 层数清零、射程复原
@@ -825,6 +1230,12 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && freezeLand.dingReady === true && freezeLand.dingPlayed === true // 叮叮叮解码好且真的在放
   && milkLaughOn.hits === 1                                    // 开关开 → 奶块落砖真的去调 laugh
   && milkLaughOn.laughReady === true && milkLaughOn.laughPlayed === true // ★ 大笑音源解码成功且真的能放
+  /* —— 音源本身：大笑只留前 4 秒、两段录音都调低过 —— */
+  && clipInfo.laughDur !== null && clipInfo.laughDur > 3.5 && clipInfo.laughDur < 4.6
+  && clipInfo.dingDur !== null && clipInfo.dingDur > 0.3
+  && clipInfo.laughVol !== null && clipInfo.laughVol <= 0.35   // 调低过（原 0.85/0.55）
+  && clipInfo.dingVol !== null && clipInfo.dingVol <= 0.40     // 调低过（原 0.9/0.6）
+  && clipInfo.laughVol >= 0.12 && clipInfo.dingVol >= 0.15     // 但也别调到听不见
   && freezePress.charging === false && freezePress.power === 0 // 冻住期间按不出蓄力
   && freezeThaw.frozenT === 0 && freezeThaw.flag === false     // 1.5s 后自动解冻
   && freezeAfterPress.charging === true                        // 解冻后真的能动了
@@ -832,6 +1243,27 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && lureDist < lureNoTrait * 0.35                             // 而且明显比"没磁铁"更接近砖心
   && lureFarDist > lureTol * 2                                 // 蓄力差一大截时，磁铁也救不了
   && holyGone.cfg === true && holyGone.seen === 0              // 圣光砖整体删除（配置项 + 抽签池）
+  /* —— 2026-10-04：FOV 40 / MJ 砖与蜘蛛抓人 / 奶块 GIF —— */
+  && fovNow === 40
+  && mjArmed.trait === 'mj' && mjArmed.state === 'ready'
+  && mjArmed.timer !== null && mjArmed.timer > 0.8 && mjArmed.timer <= 1.0
+  && mjArmed.letters >= 20                                     // M 13 + J 9 = 22 粒方块
+  && mjDrop.state === 'mjgrab' && mjDrop.phase === 'drop'
+  && mjDrop.layerShown === true
+  && typeof mjDrop.spiderTop === 'string' && mjDrop.spiderTop.indexOf('px') >= 0
+  && mjPressBlocked === true                                   // 演出期间输入被挡
+  && mjDone.state === 'ready' && mjDone.layerGone === true
+  && mjDone.backOk === true                                    // 被放回后方第 3 块（不足取最近）
+  && mjDone.nextIsMj === true                                  // next 重排到目标砖前一块
+  && mjDone.charVisible === true && mjDone.blobVisible === true
+  && mjDone.mjCleared === true
+  && mjCancel.keepOnBrick === true && mjCancel.leaveCancels === true
+  && gif.laughHits === 1 && gif.hasGif === true && gif.isSprite === true
+  && gif.ownTex === true                                       // ★ 独立纹理实例（防 UV 冲突）
+  && gif.repeatW > 0 && gif.repeatW < 1                        // 雪碧图切帧中
+  && gif.opacity === 1 && gif.aboveChar === true
+  && gif.life > 4 && gif.max > 4                               // 和 4s 笑声差不多长
+  && gifGone.left === 0                                        // 播完自清
   && charSize.h <= 1.481 && charSize.h >= 1.0 && charSize.w <= charSize.h + 1e-6 // 角色体积缩小
   /* —— 冰冰冰：三块真冰块 + 顶面不再有图案 —— */
   && ice.count === 3 && ice.shared === true
@@ -852,11 +1284,61 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && equipped.id === accId && equipped.visible === true
   && equipped.stored === accId
   && equipped.aboveHead === true                               // 帽子在头顶之上，不是嵌进身体
+  && equipped.inFront === true                                 // 头饰在立绘前面
   && Math.abs(equipped.relHeight - 0.46) < 0.02                // 本体高 / 角色高 ≈ hK
-  && panelAcc.cells >= 2 && panelAcc.onId === accId            // 面板里当前这件是选中态
-  && afterSwap.id === accId && afterSwap.visible === true      // 换角色不掉装饰（通用）
+  /* 光环：10 奶币买得到、走头饰槽、位置在头顶之上 */
+  && haloBought.err === null && haloBought.coins === 90        // 100 - 10
+  && haloBought.owned === true && haloBought.price === 10 && haloBought.stored === true
+  && haloEq.id === 'halo' && haloEq.visible === true && haloEq.aboveHead === true
+  && Math.abs(haloEq.relHeight - 0.30) < 0.02
+  /* 冰锥翅膀：独立背饰槽位 ——  coexist 头饰、垫在身后 */
+  && wingEq.err === null && wingEq.owned === true && wingEq.price === 10
+  && wingEq.cat === 'back' && wingEq.id === 'wing' && wingEq.visible === true
+  && wingEq.headStillOn === true                               // ★ 换背饰不顶掉头饰
+  && wingEq.behind === true && wingEq.underHead === true       // 垫在角色后面
+  && wingEq.belowHead === true                                 // ★ 挂在上背，不是飘在头顶
+  && Math.abs(wingEq.relHeight - 1.05) < 0.05                           // ≈ hK（内容框 h=0.58，本体高按内容算）
+  && wingEq.relWidth > 1.2 && wingEq.relWidth < 1.8                     // ★ 宽度受控：够大能露出来、又别横摊
+  && wingEq.stored === 'wing'
+  /* ★ 新抠的免费角色：都在、名字对得上、免费（不 locked / 不带价签） */
+  && newChars.length === 7 && newChars.every((c) => c.cell && c.nameOk)
+  && newChars.every((c) => c.price === 0 && c.locked === false && c.priceTag === false)
+  && newChars.every((c) => c.label === c.name)              // 格子里显示的就是角色名
+  && charTotal === 43                                        // 36 静态 + 7 新 + …（数对不上说明漏了/多了）
+  && frogFirst === true                                      // ★ 经典奶蛙置顶在第一格
+  && angry2UriLen > 5000                                     // ★ 奶怒2 贴图不能是空 base64
+  /* 仓库：已拥有不标价 / 未拥有低亮 + 标价；三行分类都在 */
+  && panelAcc.rows === 3 && panelAcc.rowNames === '头饰,背饰,特效'
+  && panelAcc.cells >= 5
+  && panelAcc.ownedWithPrice === 0                             // ★ 拥有的一律不显示价格
+  && panelAcc.lockedWithoutPrice === 0                         // ★ 未拥有的一律有价签
+  && panelAcc.wingCell === true && panelAcc.haloCell === true
+  && panelAcc.splashCell === true && panelAcc.splashLocked === true  // ★ 魔法阵在仓库里，未拥有→价签
+  && afterSwap.head === 'halo' && afterSwap.headVisible === true
+  && afterSwap.back === 'wing' && afterSwap.backVisible === true  // 换角色两槽都在（通用）
   && unequipped.id === null && unequipped.visible === false
-  && unequipped.stored === null                               // 卸下要把存档写掉
+  && unequipped.stored === null                                // 卸下要把存档写掉
+  && unequipped.backKept === true                              // 摘头饰不动背饰
+  /* ★ 落地特效「水花」：买 → 装 → 落地真出粒子 → 卸下不再出 */
+  && splashBought.err === null && splashBought.owned === true
+  && splashBought.stored.indexOf(fxId) >= 0
+  && splashBought.noMesh === true                              // fx 槽不建 mesh
+  && splashEquipped.equipped === fxId && splashEquipped.stored === fxId
+  && splashEquipped.hasFx === true && splashEquipped.notOther === true
+  && splashEquipped.headKept === true                          // 装特效不影响真槽位
+  && splashAfterOne.count >= 8                                 // 阵图层要够（外圈+内圈+阵眼+6射线）
+  && splashAfterOne.ring === 0                                 // ★ 魔法阵不是旧的扩散环
+  && splashAfterOne.magic >= 7                                 // ★ 魔法阵至少 7 片
+  && splashAfterOne.lowStart === true                          // ★ 贴地铺开，不悬空
+  && splashAfterOne.shortLife === true                         // ★ 短暂：最长 < 1.0s
+  && splashAfterOne.flats === true                             // ★ 都是平面几何（环/圆/面片）
+  && splashAfterOne.spinning === true                          // ★ 阵在转，不是静止贴纸
+  && splashOff.equipped === null && splashOff.hasFx === false
+  && splashOff.stored === null                                 // 卸下要清存档
+  && splashOff.grow === 0                                      // ★ 卸下后落地不再铺阵
+  && splashE2e.off < splashE2e.peak - 3                        // ★ 没装备时的峰值里没有那 9 片阵
+  && splashE2e.peak >= 9                                        // ★ 装备后真落地铺出完整一圈
+  && splashE2e.after === 0 && splashE2e.hasFx === true          // 短促 → 自己消失干净
   /* 角色买卖 + 动图角色 */
   && charPoor.err === '奶币不够' && charPoor.owned === false
   && charPoor.coins === charPrice - 1                          // 拒绝时余额分毫不动
@@ -893,6 +1375,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && settings.setExclusive === true                          // 与其它面板互斥
   && settings.uiBlockHole.length === 0;                       // 首页按钮没有漏 ui-block 的
 
+
 return {
   ok, dotOn, notice, noticeClosed, noticeAgain, gift, giftAgain,
   shop, shopClosed,
@@ -918,10 +1401,20 @@ return {
   },
   ice,
   holyGone,
+  fov: fovNow,
+  mj: { armed: mjArmed, drop: mjDrop, pressBlocked: mjPressBlocked, done: mjDone, cancel: mjCancel },
+  gif, gifGone,
   charSize,
   milk: { off: milkLaughOff, on: milkLaughOn },
-  acc: { noticeBuy, equipped, panelAcc, afterSwap, unequipped },
-  char: { poor: charPoor, bought: charBought, anim, thumb },
+  clip: clipInfo,
+  acc: {
+    noticeBuy, equipped, panelAcc, afterSwap, unequipped,
+    halo: { bought: haloBought, eq: haloEq },
+    wing: { eq: wingEq },
+    splash: { bought: splashBought, equipped: splashEquipped, one: splashAfterOne, off: splashOff, e2e: splashE2e },
+  },
+  char: { poor: charPoor, bought: charBought, anim, thumb,
+          newChars: newChars, charTotal, frogFirst, angry2UriLen },
   settings,
   pidTag: pidTagOut,
 };

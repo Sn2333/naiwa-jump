@@ -4,6 +4,11 @@
  * 不这么做的话，"调音量"就得在每个 tone/noise 调用点各乘一次，漏一个就
  * 会出现"调小了还是有一声很响"。总线只有一处增益，绝不会漏。
  */
+
+/** 两段"真实录音"音源的播放音量（见下方 laugh/ding 的注释）。
+ *  单独拿出来是为了让探针能直接读、断言"确实调低过"。 */
+export const CLIP_VOL = { laugh: 0.30, ding: 0.34 };
+
 export class Sound {
   constructor() {
     this.ctx = null;
@@ -195,11 +200,13 @@ export class Sound {
     return true;
   }
 
-  /* 两个具名片段：奶块的大笑（音量 0.85）、冰冰冰的"叮叮叮"（0.9）。
-   * 大笑受设置里的"奶块大笑"开关管（调用点自己判）；
-   * 叮叮叮属于普通砖块音效，只受全局静音管。 */
-  laugh() { return this.playClip('laugh', 0.85); }
-  ding() { return this.playClip('ding', 0.9); }
+  /* 两个具名片段：奶块的大笑、冰冰冰的"叮叮叮"。
+   * 2026-10-04 按玩家反馈整体调低两次（0.85/0.9 → 0.55/0.6 → 0.30/0.34）：
+   * 这两段是录来的真实音源，比合成音效本身响得多。
+   * 大笑同时截成前 4 秒（原 9.98s 落到奶块上会一直笑）。
+   * ★ 音量写成常量而不是内联字面量：探针要断言"调低过"，读常量比读魔法数字稳。 */
+  laugh() { return this.playClip('laugh', CLIP_VOL.laugh); }
+  ding() { return this.playClip('ding', CLIP_VOL.ding); }
 }
 
 export const sound = new Sound();

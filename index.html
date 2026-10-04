@@ -234,6 +234,23 @@ if (location.search.indexOf('dbg') >= 0) {
 
   /* ---------------- 弹出文字 ---------------- */
   #popLayer { position: fixed; inset: 0; pointer-events: none; z-index: 11; }
+
+  /* ---------------- 蜘蛛奶抓人（MJ 砖罚时） ----------------
+   * DOM 覆盖层：蛛丝 + 倒吊蜘蛛（图片 rotate 180°），位置全部由 game.js
+   * 每帧写 inline style（探针可断言）。z-index 压过飘字层、低于暂停/面板。 */
+  #mjLayer { position: fixed; inset: 0; pointer-events: none; z-index: 12; display: none; }
+  #mjLayer.show { display: block; }
+  #mjSpider {
+    position: absolute; width: 116px; transform: translate(-50%, -50%) rotate(180deg);
+    filter: drop-shadow(0 4px 10px rgba(30, 20, 60, .45));
+    transition: opacity .32s ease;
+  }
+  #mjSilk {
+    position: absolute; top: 0; width: 3px; transform: translateX(-50%);
+    background: linear-gradient(#f5f2ff, #cfd4f2);
+    transition: opacity .32s ease;
+  }
+  #mjLayer.fade #mjSpider, #mjLayer.fade #mjSilk { opacity: 0; }
   .pop {
     position: absolute; transform: translate(-50%, -50%);
     font-size: 22px; font-weight: 800; white-space: nowrap;
@@ -389,6 +406,13 @@ if (location.search.indexOf('dbg') >= 0) {
     background: rgba(128, 128, 128, .10); border-radius: 10px;
   }
   .accCell .accThumb img { width: 44px; height: 44px; object-fit: contain; }
+  /* fx 类（魔法阵这类落地特效）没有贴图，用同一套底色 + 图标顶上，
+     尺寸和真贴图一致，仓库那一行不会塌下去。 */
+  .accCell .accThumb.fxico {
+    background: linear-gradient(180deg, #E4F7FF, #C6ECFF);
+    box-shadow: inset 0 0 0 1px rgba(110, 190, 230, .45);
+    font-size: 22px;
+  }
   .accCell span {
     font-size: 11px; color: var(--ink-dim); letter-spacing: .3px;
     max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -398,10 +422,17 @@ if (location.search.indexOf('dbg') >= 0) {
     box-shadow: 0 6px 18px rgba(255, 190, 70, .18);
   }
   .accCell.on span { color: var(--cell-on-ink); font-weight: 700; }
-  /* 没买的：整体压暗就够表态了。**这里不显示价格** —— 价格是商店的事，
-     选装饰时只看"有没有"，价钱挤在缩略图上既挡脸又让人分心（玩家反馈）。
-     想买就点它跳商店，商店里那一条才带售价。 */
+  /* 没买的：整体压暗 + 名字下面挂一枚价签。**已拥有的不显示价格** ——
+     拥有之后只剩"戴不戴"一个问题，价钱是商店才需要的信息（玩家反馈）。
+     想买就点它跳商店，商店里那一条才是真正下单的地方。 */
   .accCell.locked { opacity: .58; }
+  .accCell .accPrice {
+    font: 800 10px/1 inherit; font-style: normal; letter-spacing: .2px;
+    padding: 2px 6px; border-radius: 999px;
+    color: #4A2E00; background: linear-gradient(180deg, #FFE08A, #F5B93C);
+    box-shadow: 0 1px 5px rgba(180, 120, 0, .26);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .charCell {
     display: flex; flex-direction: column; align-items: center; gap: 4px;
     padding: 10px 4px 8px; border-radius: 14px; cursor: pointer;
@@ -639,6 +670,13 @@ if (location.search.indexOf('dbg') >= 0) {
     width: 54px; height: 54px; flex: 0 0 auto; object-fit: contain;
     background: rgba(128, 128, 128, .10); border-radius: 12px; padding: 3px;
   }
+  /* fx 类（魔法阵这类落地特效）没有贴图 —— 给一张青蓝色占位图，
+     位置和尺寸跟真贴图完全一致，免得货架上一行高高低低。 */
+  .shopItem .shopIco.fxico {
+    display: grid; place-items: center; padding: 0; font-size: 26px;
+    background: linear-gradient(180deg, #E4F7FF, #C6ECFF);
+    box-shadow: inset 0 0 0 1px rgba(110, 190, 230, .45);
+  }
   .shopItem .shopMeta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .shopItem .shopMeta b { font-size: 15px; color: var(--head-ink); letter-spacing: .5px; }
   .shopItem .shopMeta span { font-size: 12px; color: var(--ink-dim); line-height: 1.4; }
@@ -677,6 +715,12 @@ if (location.search.indexOf('dbg') >= 0) {
      日期和正文用弱色，标题用强调色 —— 一眼先看到"这条讲什么"。 */
   .noticeDate { font-size: 12px; color: var(--ink-dim); letter-spacing: .5px; margin-bottom: 2px; }
   .noticeTitle { font-size: 16px; font-weight: 800; color: var(--head-ink); letter-spacing: 1px; margin-bottom: 6px; }
+  /* 置顶公告的小红标（pinned 条目专属，见 openNoticePanel） */
+  .pinTag {
+    display: inline-block; font-style: normal; font-size: 11px; font-weight: 700;
+    color: #fff; background: #E0564F; border-radius: 4px;
+    padding: 1px 6px; margin-right: 6px; letter-spacing: 2px; vertical-align: 2px;
+  }
   .noticeBody { font-size: 13.5px; color: var(--ink); line-height: 1.75; white-space: pre-wrap; }
   /* 附赠行：一枚高亮胶囊，左"🎁 附赠「生日帽」"、右领取按钮 */
   .noticeGift {
@@ -800,6 +844,8 @@ if (location.search.indexOf('dbg') >= 0) {
   .setRow.na .setSwitch { pointer-events: none; }
   #overCoin { color: var(--accent-2); font-weight: 600; letter-spacing: .5px; }
   #overCoin:empty { display: none; }
+  #overCoinPoint { color: var(--accent-2); font-weight: 600; letter-spacing: .5px; }
+  #overCoinPoint:empty { display: none; }
 </style>
 </head>
 <body>
@@ -817,6 +863,9 @@ if (location.search.indexOf('dbg') >= 0) {
   <div id="hint">按住蓄力 · 松开起跳</div>
 </div>
 <div id="popLayer"></div>
+<!-- 蜘蛛奶抓人（MJ 砖罚时）覆盖层：纯演出，JS 驱动（探针可测）。
+     绝不能加 .ui-block —— 那是"点击放行"的白名单标记，加了会吃掉演出期间的输入。 -->
+<div id="mjLayer"><div id="mjSilk"></div><img id="mjSpider" alt=""></div>
 
 <div id="startScreen">
   <div id="coinTag"></div>
@@ -938,6 +987,7 @@ if (location.search.indexOf('dbg') >= 0) {
   <div class="overMeta">历史最佳 <b id="overBest">0</b> 分</div>
   <div class="overMeta" id="overPeach"></div>
   <div class="overMeta" id="overCoin"></div>
+  <div class="overMeta" id="overCoinPoint"></div>
   <div id="overRank"></div>
   <div class="btnRow">
     <button id="againBtn" class="btn ui-block">再 来 一 局</button>

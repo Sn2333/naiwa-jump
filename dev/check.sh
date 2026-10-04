@@ -103,11 +103,20 @@ COIN_OUT=$(PROBE_RUN="$(cat dev/coin_probe.js)" \
   "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?coin=7&coins=1&plain&seenotice&kind=round&r=0.8&gap=2.6" \
   "$SHOT_DIR/_check_coin.png" 3000 2>&1)
 if echo "$COIN_OUT" | grep -q '"ok":true'; then
-  echo "  ✓ 公告自动弹+附赠领取(幂等·落盘)、生日帽已下架商店、商店余额、"
-  echo "    砖上奶币实体(拾取累加·结算×10·与分数无关)、脆砖碎裂、×2 翻倍、"
-  echo "    弹簧/粘液/冰冰冰/磁铁/圣光 五种效果砖（含弹簧助推只活一跳）、"
-  echo "    冰冰冰三冰块模型+物理材质(ior 1.31/无顶面图案)、奶块顶面蛙脸+大笑受开关控制、"
+  echo "  ✓ 公告自动弹+附赠领取(幂等·落盘)、紧急公告置顶、商店余额、"
+  echo "    砖上奶币实体(拾取累加·结算×10·每枚+5分)、脆砖碎裂、×2 翻倍、"
+  echo "    弹簧/粘液/冰冰冰/磁铁/MJ砖 效果砖（含弹簧助推只活一跳）、"
+  echo "    蜘蛛奶抓人(drop→grab→rise→land·退3砖·计时跳走作废)、"
+  echo "    奶块顶面蛙脸+大笑+大笑GIF(独立纹理·播完自清)、FOV40、"
   echo "    角色买卖与雪碧图动图推帧、设置开关/音量滑条落盘、装饰装载、循环防异常 全过"
+  # 音源与背饰的量化指标直接打出来：这几项是"感觉"最容易骗人的地方
+  echo "$COIN_OUT" | grep -o '"clip":{[^}]*}' | sed 's/^/    · 音源 /'
+  echo "$COIN_OUT" | grep -o '"wing":{"eq":{[^}]*}' | sed 's/^/    · 背饰 /'
+  echo "$COIN_OUT" | grep -o '"one":{"count":[0-9]*[^}]*}' | sed 's/^/    · 魔法阵 /'
+  echo "$COIN_OUT" | grep -o '"e2e":{"off":[0-9]*,"peak":[0-9]*[^}]*}' | sed 's/^/    · 魔法阵落地 /'
+  echo "$COIN_OUT" | grep -o '"fov":[0-9]*' | sed 's/^/    · 视野 /'
+  echo "$COIN_OUT" | grep -o '"gifGone":{"left":[0-9]*}' | sed 's/^/    · 奶块GIF /'
+  echo "$COIN_OUT" | grep -o '"backOk":[a-z]*,"nextIsMj":[a-z]*' | sed 's/^/    · 蜘蛛抓人 /'
 else
   echo "  ✗ 货币/公告赠礼/新砖种/角色/装饰链路失败："
   echo "$COIN_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$COIN_OUT" | tail -25

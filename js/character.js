@@ -1,8 +1,11 @@
 import * as THREE from './vendor/three.module.js';
 import { CHARS, DEFAULT_CHAR } from './sprite_data.js';
 import { ANIM_CHARS } from './anim_data.js';
-import { accDef } from './acc.js';
+import { accDef, ACC_MESH_SLOTS } from './acc.js';
 import { ACC_IMG, ACC_BOX } from './acc_data.js';
+
+/** 有 3D 贴图的槽位（= 需要建 mesh 的那几个）。fx 这类"行为开关"不建 mesh。 */
+const ACC_SLOTS = ACC_MESH_SLOTS;
 
 /* ------------------------------------------------------------------ */
 /* 纸片人角色                                                          */
@@ -59,9 +62,10 @@ const CFG = {
   boingSquash: 0.40,   // 被压下去时的压扁比例
   boingStretch: 0.60,  // 弹起来时的拉长比例
 
-  /* —— 装饰（头饰）—— */
+  /* —— 装饰（头饰 / 背饰）—— */
   accHeadMinW: 0.30,   // 一行实心宽度达到"最宽行"的这个比例才算"头顶"（跳过呆毛/天线）
   accZ: 0.012,         // 头饰前移量：立绘在 z=0、描边在 z=-0.004，正 z 就是更靠镜头
+  backDropK: 0.42,     // 背饰锚点：从头顶往下挪"角色高 × 这个值"落在上背
 };
 
 /* 头顶锚点缓存：键是角色 key。
@@ -191,16 +195,25 @@ export class Character3D {
     this.geo = geo;
     this.tex = tex;
 
-    /* 装饰层（头饰）。放在 pivot 里 —— pivot 承载挤压/拉伸与蹦床位移，
-     * 所以帽子会跟着身体一起被压扁、弹起，不会像贴纸一样飘在旁边。
-     * pivot 在 billboard 之下，天然保持正对相机，和自己的立绘同一套朝向。 */
-    this.acc = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
-    }));
-    this.acc.visible = false;
-    this.acc.renderOrder = 3;
-    this.pivot.add(this.acc);
-    this.accId = null;
+    /* 装饰层（头饰 / 背饰）。放在 pivot 里 —— pivot 承载挤压/拉伸与蹦床位移，
+     * 所以装饰会跟着身体一起被压扁、弹起，不会像贴纸一样飘在旁边。
+     * pivot 在 billboard 之下，天然保持正对相机，和自己的立绘同一套朝向。
+     * 一个槽位一层 mesh：头饰 renderOrder 3（盖在角色上）、
+     * 背饰 renderOrder -1（垫在角色后面，翅膀才不会被身体挡住）。 */
+    this.accLayer = {};
+    for (const [cat, order, z] of [['head', 3, CFG.accZ], ['back', -1, -CFG.accZ]]) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        transparent: true, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+      }));
+      m.visible = false;
+      m.renderOrder = order;
+      m.userData.z = z;
+      this.pivot.add(m);
+      this.accLayer[cat] = m;
+    }
+    /* 兼容旧接口：this.acc 指头饰那层（探针与旧代码都读它） */
+    this.acc = this.accLayer.head;
+    this.accIds = {};              // { head: id|null, back: id|null }
     this.headAnch = null;
 
     /* 冰冻外壳：拿同一张贴图放大一圈、染成冰蓝、半透明，罩在立绘外面。
@@ -398,52 +411,78 @@ export class Character3D {
    * （第一版就是这样，截图一看帽子悬在头顶外面）。
    */
   _layoutAcc() {
-    const deco = accDef(this.accId);
-    if (!deco) { this.acc.visible = false; return; }
+    for (const cat of ACC_SLOTS) this._layoutSlot(cat);
+  }
+
+  /** 摆一个槽位。头饰挂在头顶剪影锚点上，背饰挂在"头下方一点的上背" */
+  _layoutSlot(cat) {
+    const mesh = this.accLayer[cat];
+    if (!mesh) return;
+    const deco = accDef(this.accIds[cat]);
+    if (!deco) { mesh.visible = false; return; }
     const a = this.headAnchor();
-    if (!a) { this.acc.visible = false; return; }   // 贴图还没解码完，等 onReady 再摆
+    if (!a) { mesh.visible = false; return; }  // 贴图还没解码完，等 onReady 再摆
     const box = ACC_BOX[deco.img] || { x: 0, y: 0, w: 1, h: 1 };
     const w = this.width, h = this.height;
+    /* 头顶位置（立绘剪影的最上沿）：头饰挂它、背饰从它往下量。
+     * ★ 不能用 mesh.position.y + h/2 —— 那是**画布**上沿，不是脑袋上沿。
+     *   抠图会把主体补成正方形再四周留白，画布上沿可能高出脑袋一大截，
+     *   背饰照着画布中心摆就直接飘到人物头上面去了（第一版就是这样）。 */
     const headTopX = -w / 2 + a.nx * w;
     const headTopY = this.mesh.position.y + h / 2 - a.ny * h;
-    /* 尺寸按"内容高度 = 角色高度 × hK"定 —— 所有人一样高，帽子就一样大；
-     * 过宽的角色会被等比缩小，帽子跟着小，比例不会失控。 */
-    const chw = h * (deco.hK || 0.42);               // 内容（帽子本体）世界高度
+    /* 背饰锚点：从头顶往下 h*backDropK 落在上背；头饰就锚在头顶本身。 */
+    const cy = cat === 'back' ? headTopY - h * (CFG.backDropK || 0.42) : headTopY;
+    const cx = headTopX;
+    /* 尺寸按"内容高度 = 角色高度 × hK"定 —— 所有人一样高，装饰就一样大；
+     * 过宽的角色会被等比缩小，装饰跟着小，比例不会失控。 */
+    const chw = h * (deco.hK || 0.42);               // 内容（装饰本体）世界高度
     const cww = chw * (box.w / box.h || 1);          // 内容世界宽度
     const aw = cww / (box.w || 1);                   // 整张画布的世界宽度
     const ah = aw;                                   // 画布是正方形
     /* 内容框中心相对画布中心的偏移，得反向补偿掉 */
     const offX = ((box.x + box.w / 2) - 0.5) * aw;
     const offY = ((box.y + box.h / 2) - 0.5) * ah;
-    const contentX = headTopX + (deco.dx || 0) * cww;
-    const contentY = headTopY + (deco.dy || 0) * chw;   // dy 正 = 中心在头顶之上
-    this.acc.scale.set(aw, ah, 1);
-    this.acc.position.set(contentX - offX, contentY - offY, CFG.accZ);
-    this.acc.visible = true;
+    const contentX = cx + (deco.dx || 0) * cww;
+    const contentY = cy + (deco.dy || 0) * chw;
+    mesh.scale.set(aw, ah, 1);
+    mesh.position.set(contentX - offX, contentY - offY, mesh.userData.z || 0);
+    mesh.visible = true;
   }
 
-  /** 换头饰（null = 不戴）。贴图从 acc_data.js 里按装饰定义的 img 键取 */
-  setAccessory(id) {
+  /**
+   * 换装饰（null = 摘掉）。不传 cat 时按装饰定义自己的分类；
+   * 传 cat 则强制挂到该槽位（换装界面里点哪个格子就是哪个槽）。
+   * 贴图从 acc_data.js 里按装饰定义的 img 键取。
+   */
+  setAccessory(id, cat) {
     const deco = accDef(id);
-    this.accId = deco ? deco.id : null;
-    if (!deco) {
-      this.acc.visible = false;
-      const m = this.acc.material;
-      if (m.map) { m.map.dispose(); m.map = null; m.needsUpdate = true; }
-      return null;
-    }
+    const slot = (deco ? deco.cat : cat) || 'head';
+    const mesh = this.accLayer[slot];
+    if (!mesh) return null;
+    this.accIds[slot] = deco ? deco.id : null;
+    if (!deco) return this._clearSlot(slot);
     const uri = ACC_IMG[deco.img];
-    if (!uri) { this.acc.visible = false; return null; }
+    if (!uri) { mesh.visible = false; return null; }
     const tex = this._loadTex(uri, () => {
-      this.acc.material.needsUpdate = true;
-      this._layoutAcc();
+      mesh.material.needsUpdate = true;
+      this._layoutSlot(slot);
     });
-    const old = this.acc.material.map;
-    this.acc.material.map = tex;
-    this.acc.material.needsUpdate = true;
-    this._layoutAcc();
+    const old = mesh.material.map;
+    mesh.material.map = tex;
+    mesh.material.needsUpdate = true;
+    this._layoutSlot(slot);
     if (old) old.dispose();
     return deco;
+  }
+
+  /** 摘掉一个槽位的装饰并释放贴图 */
+  _clearSlot(cat) {
+    const mesh = this.accLayer[cat];
+    if (!mesh) return null;
+    mesh.visible = false;
+    const m = mesh.material;
+    if (m.map) { m.map.dispose(); m.map = null; m.needsUpdate = true; }
+    return null;
   }
 
   /** 换角色：只换贴图与尺寸，几何体与材质都复用 */

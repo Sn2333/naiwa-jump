@@ -117,8 +117,9 @@ theme_src = strip_imports(theme_src)
 theme_src = re.sub(r"^export ", "", theme_src, flags=re.M)
 
 audio_src = (JS / "audio.js").read_text(encoding="utf-8")
-audio_src = audio_src.replace("export class Sound", "class Sound")
-audio_src = audio_src.replace("export const sound", "const sound")
+# audio.js 整份塞进独立 IIFE（它不 import 任何模块），所以任何 export 都得剥掉 ——
+# 这里统一按行首剥，新增导出常量就不会再漏（2026-10-04 加 CLIP_VOL 时就是这么炸的）。
+audio_src = re.sub(r"^export ", "", audio_src, flags=re.M)
 
 hit_raw = (JS / "hit.js").read_text(encoding="utf-8")
 hit_names = exports_of(hit_raw)
@@ -154,6 +155,15 @@ assert media_want, "game.js 没有从 media_data.js 引入任何东西（改名�
 missing_media = set(media_want) - set(media_names)
 assert not missing_media, f"game.js 引用了媒体模块没导出的符号：{sorted(missing_media)}"
 
+# 蜘蛛奶抠图（MJ 砖抓人演出）：只有 game.js 用得上，同 media_data.js 整段内联
+spider_raw = (JS / "spider_data.js").read_text(encoding="utf-8")
+spider_names = exports_of(spider_raw)
+spider_src = re.sub(r"^export ", "", spider_raw, flags=re.M)
+spider_want = imports_from(game_raw, "spider_data.js")
+assert spider_want, "game.js 没有从 spider_data.js 引入任何东西（改名了？）"
+missing_spider = set(spider_want) - set(spider_names)
+assert not missing_spider, f"game.js 引用了 spider_data.js 没导出的符号：{sorted(missing_spider)}"
+
 bundle = (
     three_wrapped
     + "const __M = {};\n"
@@ -163,17 +173,20 @@ bundle = (
     + acc_data_src + "\n" + anim_src + "\n" + acc_src
     + char_src + "\n" + theme_src
     + "\n__M.Character3D = Character3D;\n__M.charList = charList;\n__M.charDef = charDef;\n"
+    + "__M.ANIM_CHARS = ANIM_CHARS;\n"   # game.js 的奶块 GIF 也要按 key 找大笑奶蛙的定义
     + "__M.bgList = bgList;\n__M.bgDef = bgDef;\n__M.DEFAULT_BG = DEFAULT_BG;\n"
     + expose_for(acc_all_names)
     + "})(__THREE);\n"
-    + "(function(){\n" + audio_src + "\n__M.sound = sound;\n})();\n"
+    + "(function(){\n" + audio_src + "\n__M.sound = sound;\n__M.CLIP_VOL = CLIP_VOL;\n})();\n"
     + "(function(){\n" + api_src + "\n" + expose_for(api_names) + "})();\n"
-    + "(function(THREE){\nconst Character3D = __M.Character3D;\nconst sound = __M.sound;\n"
+    + "(function(THREE){\nconst Character3D = __M.Character3D;\nconst sound = __M.sound;\nconst CLIP_VOL = __M.CLIP_VOL;\n"
     + "const charList = __M.charList;\nconst charDef = __M.charDef;\n"
+    + "const ANIM_CHARS = __M.ANIM_CHARS;\n"
     + "const DEFAULT_CHAR = __M.DEFAULT_CHAR;\n"
     + "const bgList = __M.bgList;\nconst bgDef = __M.bgDef;\nconst DEFAULT_BG = __M.DEFAULT_BG;\n"
     + decls_for(game_needs) + decls_for(game_needs_acc)
     + media_src + "\n"
+    + spider_src + "\n"
     + hit_src + "\n"
     + game_src + "\n})(__THREE);\n"
 )
@@ -192,9 +205,10 @@ GAME_IIFE_LOCALS = {
     "Character3D", "sound", "charList", "charDef", "DEFAULT_CHAR",
     "bgList", "bgDef", "DEFAULT_BG",
 }
-_gm_satisfied = GAME_IIFE_LOCALS | set(game_needs) | set(game_needs_acc) | set(media_names) | set(hit_names)
-for _mod in ("api.js", "acc.js", "acc_data.js", "character.js", "theme.js",
-             "sprite_data.js", "hit.js", "media_data.js"):
+_gm_satisfied = (GAME_IIFE_LOCALS | set(game_needs) | set(game_needs_acc)
+                 | set(media_names) | set(spider_names) | set(anim_names) | set(hit_names))
+for _mod in ("api.js", "acc.js", "acc_data.js", "character.js", "theme.js", "anim_data.js",
+             "sprite_data.js", "hit.js", "media_data.js", "spider_data.js"):
     for _n in imports_from(game_raw, _mod):
         assert _n in _gm_satisfied, f"单文件版缺少 {_mod} 的注入：{_n}"
 

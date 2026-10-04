@@ -118,7 +118,7 @@ class CDP {
           this.pending.delete(id);
           reject(new Error(`${method} 超时`));
         }
-      }, 30000);
+      }, 60000);
     });
   }
   on(fn) { this.handlers.push(fn); }

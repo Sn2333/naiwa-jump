@@ -7,11 +7,13 @@ import { Character3D, charList, charDef } from './character.js';
 import { DEFAULT_CHAR } from './sprite_data.js';
 import { bgList, bgDef, DEFAULT_BG } from './theme.js';
 import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard, fetchPid } from './api.js';
-import { sound } from './audio.js';
+import { sound, CLIP_VOL } from './audio.js';
 import { edgeOver, perfectTol } from './hit.js';
 import { accList, accDef, accCat, ACC_CATS, shopAccList } from './acc.js';
-import { COIN_URI, ACC_IMG, MILK_FACE_URI } from './acc_data.js';
+import { COIN_URI, ACC_IMG, ACC_BOX, MILK_FACE_URI } from './acc_data.js';
 import { LAUGH_URI, DING_URI, PAY_URI } from './media_data.js';
+import { SPIDER_IMG } from './spider_data.js';
+import { ANIM_CHARS } from './anim_data.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -20,10 +22,74 @@ const smoothstep = (t) => t * t * (3 - 2 * t);
 const escapeHTML = (s) => String(s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/* ---------------- Minecraft 风格方块粒子（尘土 / 落地碎片用） ----------------
+ * 思路：MC 方块的立体感不来自场景光照，而来自**逐面常量明暗** ——
+ * 顶面最亮、侧面居中、底面最暗。这里直接给 BoxGeometry 刷顶点色：
+ * 每面 4 个顶点（非索引化后是 6 个三角顶点/面）刷同一个颜色，
+ * 材质 vertexColors + MeshBasicMaterial（不受光）→ 方块永远是设定好的青蓝，
+ * 六个面明暗分明，不会被暖色奶黄地面的方向光染成发白小点。
+ * tint 可选：[r,g,b] 基色比例。缺省是青蓝（尘土沿用）；MJ 字母传蜘蛛红。 */
+const MC_FACE = [1.00, 0.72, 1.16, 0.55, 0.86, 0.86];   // +x,-x,+y,-y,+z,-z 的明暗系数
+
+function makePixelCube(size, tint) {
+  const t = tint || [0.30, 0.66, 0.87];
+  const g = new THREE.BoxGeometry(size, size, size);
+  const pos = g.getAttribute('position');
+  const col = new Float32Array(pos.count * 3);
+  for (let f = 0; f < 6; f++) {
+    const k = MC_FACE[f];
+    const r = Math.min(1, t[0] * k), gg = Math.min(1, t[1] * k), b = Math.min(1, t[2] * k);
+    for (let v = 0; v < 4; v++) {
+      const i = (f * 4 + v) * 3;
+      col[i] = r; col[i + 1] = gg; col[i + 2] = b;
+    }
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  /* ★ 索引化几何的 color attribute 只有 24 个顶点，但绘制时按索引取 —— 不必展开，
+   *   three 会自动按 index 取值，逐面着色依然正确。 */
+  return g;
+}
+
+/* 每粒一个材质（各自 dispose，互不影响）；颜色由顶点色决定，这里只给白底 */
+function pixelCubeMat() {
+  return new THREE.MeshBasicMaterial({ vertexColors: true });
+}
+
+/* ---------------- MJ 砖的立体字母 ----------------
+ * 两个字母用小方块按点阵拼出来（不引字体文件 —— 5×5 点阵的 M/J 已经读得清）。
+ * 立体感靠 makePixelCube 的逐面明暗；颜色是蜘蛛红（蜘蛛奶同款配色）。
+ * 返回一个 group，摆位与朝向由调用方定（见 Platform 构造的 trait === 'mj' 分支）。 */
+const MJ_TINT = [0.82, 0.15, 0.21];   /* 深蜘蛛红：过 renderer 的色调映射后会变浅，源头得给深 */
+const MJ_M = ['X...X', 'XX.XX', 'X.X.X', 'X...X', 'X...X'];
+const MJ_J = ['....X', '....X', 'X...X', 'X...X', '.XXX.'];
+
+function buildMjLetters(r) {
+  /* 方块边长随砖大小缩放：小砖 0.075、大砖 0.11 —— 字母永远读得清又不撑出砖 */
+  const cell = clamp(r * 0.13, 0.075, 0.11);
+  const grp = new THREE.Group();
+  const draw = (rows, ox) => {
+    for (let ry = 0; ry < rows.length; ry++) {
+      for (let cx = 0; cx < rows[ry].length; cx++) {
+        if (rows[ry][cx] !== 'X') continue;
+        const m = new THREE.Mesh(makePixelCube(cell, MJ_TINT), pixelCubeMat());
+        m.position.set(ox + cx * cell, (rows.length - 1 - ry) * cell + cell / 2, 0);
+        m.castShadow = true;
+        grp.add(m);
+      }
+    }
+  };
+  const wM = MJ_M[0].length * cell;
+  const wJ = MJ_J[0].length * cell;
+  const gap = cell * 0.7;                       // 两字母间留不到一格的缝
+  draw(MJ_M, -(wM + gap + wJ) / 2);             // M 在左
+  draw(MJ_J, -(wM + gap + wJ) / 2 + wM + gap);  // J 在右
+  return grp;
+}
+
 const CFG = {
   camOffset: new THREE.Vector3(5.4, 7.4, 5.4),
   camLookY: 0.35,
-  fov: 34,
+  fov: 40,   /* 2026-10-04 从 34 提到 40：画面缩小 = 视野扩大，砖阵看得更全 */
   gapMin: 2.15,
   gapMax: 3.80,
   jumpMin: 0.95,
@@ -44,8 +110,8 @@ const CFG = {
   /* 特色砖出现率（迷你砖由上面的曲线单独控制）
    * fragile 脆砖   —— 站上去倒计时，到点碎裂，逼玩家别恋战
    * double  ×2 砖  —— 落上这一跳的收益全部翻倍
-   * spring  弹簧    —— 站上它，下一跳射程 +25%（**只有这一跳**，离开就没了），弧线也更高
-   * slime   粘液块  —— 踩过之后射程被压住（每层 -25%，最多 2 层），越踩越跳不远
+   * spring  弹簧    —— 站上它，下一跳射程 +50%（**只有这一跳**，离开就没了），弧线也更高
+   * slime   粘液块  —— 踩过之后射程被压住（每层 -50%，最多 2 层），越踩越跳不远
    * freeze  冰冰冰  —— 落上直接把角色冻住 1.5 秒，人动不了、蓄不了力（三块真冰块）
    * lure    磁铁砖  —— 下一跳自动吸向准星，闭眼也能落正中（完美连击）
    * milk    奶块    —— 砖面上印着经典奶蛙的脸，纯装饰，没有任何效果 */
@@ -59,6 +125,11 @@ const CFG = {
    * 不是怪抽签抽到一块不让你好好玩的砖。 */
   slimeChance: 0.035,
   freezeChance: 0.035,
+  /* MJ 砖：砖上立着立体的 "M""J" 字母。站满 mjDwell 秒，蜘蛛奶会从屏幕上方
+   * 倒吊下来把人抓走、扔回后方第 mjBackSteps 块砖 —— 和粘液/冰冰冰同一档负面概率 */
+  mjChance: 0.035,
+  mjDwell: 1.0,        // 站满多少秒触发蜘蛛抓人（跳走就作废）
+  mjBackSteps: 3,      // 抓回后方第几块砖（不足 3 块取最近）
   lureChance: 0.05,
   milkChance: 0.05,
 
@@ -66,8 +137,8 @@ const CFG = {
   crackTime: 1.4,
 
   /* —— 特殊效果砖的参数 —— */
-  boostRange: 0.25,     // 弹簧助推：从弹簧起跳的那一跳射程 ×1.25。**不叠层、不跨砖**
-  slimeK: 0.25,         // 粘液块：每层把能跳的最大距离砍掉四分之一（与弹簧的 +25% 对称）
+  boostRange: 0.50,     // 弹簧助推：从弹簧起跳的那一跳射程 ×1.50。**不叠层、不跨砖**
+  slimeK: 0.50,         // 粘液块：每层把能跳的最大距离砍掉一半（与弹簧的 +50% 对称）
   slimeMax: 2,          // 粘液最多叠几层（再砍就跳不动了，得留活路）
   freezeMs: 1500,       // 冰冰冰：把角色冻住多少毫秒（期间不能蓄力起跳）
   /* 磁铁砖：只管"对准"，不管"够远"。蓄力差一点点它把你拽回砖心；
@@ -77,12 +148,20 @@ const CFG = {
   lureMaxPull: 0.55,    // 单次最多拽回多远（≈ 一个砖半径，救急不救穷）
   lureCapMul: 1.6,      // 拽回上限按目标砖半径放大：大砖多拽一点，小砖少拽一点
 
+  /* 奶块大笑 GIF：笑声（音源裁成 4s）响起的同时，砖块上方浮出大笑奶蛙动图，
+   * 播 laughGifSec 秒（含结尾淡出），和笑声差不多长 —— 声停图也散 */
+  laughGifSec: 4.2,
+
   /* —— 奶币 ——
    * 奶币不再是"踩到幸运方块掉出来的贴纸"，而是**砖面上的实体**：随机某几块砖
    * 上悬着一枚绕竖轴自转的奶币（地铁跑酷那种），跳过去碰到就收下，
    * 屏幕左上角累计本局枚数；结算按"捡到的枚数"给钱，和分数完全脱钩。 */
   coinChance: 0.30,       // 每块新砖带上一枚奶币的概率
-  coinPerPick: 10,        // 结算：每捡到 1 枚奶币入账多少
+  coinPerPick: 10,        // 结算：每捡到 1 枚奶币入账多少奶币（货币）
+  /* 结算：每捡到 1 枚奶币，**分数**也 +5（用户 2026-10-04 点名要的）。
+   *  和 coinPerPick 是两回事：一个进"钱"，一个进"分"。
+   *  分数加分在 gameOver 时一次并入 this.score，所以结算页与排行榜都算得上。 */
+  coinBonusPoint: 5,
   coinY: 0.70,            // 奶币悬在砖面上多高（要看得出来是"浮"着的）
   coinR: 0.20,            // 奶币半径（砖半径约 0.7，差不多是四分之一砖宽）
   coinSpin: 4.4,          // 自转角速度（弧度/秒）。转快一点：币转到"正侧面"时
@@ -145,14 +224,20 @@ const PEACH_COLOR = 0xDE9A22;     // 黄桃块：琥珀金的砖身（顶面另�
  *   once  同一个公告只发一次（靠把公告版本号记进 jump3d_gift_<id> 来判重）
  * 领过一次之后按钮变成"已领取"，重启也还是已领取 —— 判重的键是**公告版本号**，
  * 所以以后发新公告、附件换新，玩家又能领一次新东西。 */
-const NOTICE_VERSION = '5';
+const NOTICE_VERSION = '6';
 /* 新的排前面。**赠礼判重键绑定在公告条目上（date|附件id）**，与 NOTICE_VERSION 无关 ——
  * 不然每发一条新公告，旧公告里的生日帽就能再领一次。 */
 const NOTICE_ITEMS = [
   {
     date: '2026-10-03',
     title: '紧急通知',
+    pinned: true,   /* 置顶：渲染时永远排第一 + 挂「置顶」标（见 openNoticePanel） */
     body: '由于游戏数据（昵称、奶币、分数记录）存储在浏览器缓存中，更新后重进可能会丢失数据，目前正在考虑解决方案。建议使用浏览器游玩。另外，下次更新时间不定。特此通知，请各位玩家理解。',
+  },
+  {
+    date: '2026-10-04',
+    title: '版本 v1.2 更新说明',
+    body: '1.优化了游戏机制，削弱了粘液块和弹簧，调整了砖块距离，调整了角色大小\n2.更多奶蛙、更多装扮\n3.机制更新，增加蜘蛛奶\n4.其他优化',
   },
   {
     date: '2026-10-03',
@@ -1147,6 +1232,15 @@ class Platform {
       group.add(icon);
       this.icon = icon;
       this.iconSpin = 0;
+    } else if (this.trait === 'mj') {
+      /* MJ 砖：砖上立两个立体字母（见 buildMjLetters —— 小方块点阵拼的 M/J）。
+       * 立在**砖后缘**、正对镜头：角色是永远面向镜头的纸片人，字母也朝镜头
+       * 立在远离镜头的一侧，一前一后互不遮挡，读起来像砖后立了块招牌。 */
+      const letters = buildMjLetters(this.radius);
+      const back = -this.radius * 0.34;   // 沿"远离镜头"对角线（-x,-z）挪到后缘
+      letters.position.set(back, 0, back);
+      letters.rotation.y = Math.PI / 4;   // 点阵在 XY 平面朝 +Z；转 45° 正对相机对角线
+      group.add(letters);
     } else if (this.trait === 'slime' || this.trait === 'lure') {
       /* 效果砖共用一套图案装配，只是换素材。
        * 磁铁不转（有方向含义），粘液不转（滴落是有上下之分的） */
@@ -1403,6 +1497,10 @@ class Game {
       rankList: document.getElementById('rankList'),
       pauseBtn: document.getElementById('pauseBtn'),
       buffTag: document.getElementById('buffTag'),
+      /* —— 蜘蛛奶抓人（MJ 砖罚时）覆盖层：纯演出，pointer-events:none —— */
+      mjLayer: document.getElementById('mjLayer'),
+      mjSpider: document.getElementById('mjSpider'),
+      mjSilk: document.getElementById('mjSilk'),
       pause: document.getElementById('pausePanel'),
       pauseScore: document.getElementById('pauseScore'),
       pauseBest: document.getElementById('pauseBest'),
@@ -1428,6 +1526,7 @@ class Game {
       settingsClose: document.getElementById('settingsClose'),
       settingsList: document.getElementById('settingsList'),
       overCoin: document.getElementById('overCoin'),
+      overCoinPoint: document.getElementById('overCoinPoint'),
       runCoinTag: document.getElementById('runCoinTag'),
       /* —— 装饰 —— */
       accBar: document.getElementById('accBar'),
@@ -1490,6 +1589,10 @@ class Game {
     this.boostLv = 0;
     this.slimeLv = 0;
     this.frozenT = 0;
+    /* MJ 砖：mjTimer = 站在 MJ 砖上的倒计时（秒，null = 没在计时）；
+     * mj = 蜘蛛抓人的演出状态机（null = 无），见 startSpiderGrab / tickMjGrab */
+    this.mjTimer = null;
+    this.mj = null;
     this.combo = 0;
     this.power = 0;
     this.platforms = [];
@@ -1569,17 +1672,22 @@ class Game {
      * 顺带把它标成已拥有 —— 截图关心的是"戴上去长什么样"，
      * 不该被"还没买"挡住。?buyacc=<id> 则相反：只标记拥有，不装备。 */
     if (q.has('acc')) {
-      const id = q.get('acc');
-      if (accDef(id)) {
+      /* 支持一次戴多件：?acc=halo&acc=wing（getAll 拿全，只生效第一个很难查） */
+      for (const id of q.getAll('acc')) {
+        const deco = accDef(id);
+        if (!deco) continue;
         this.accOwned.add(id);
-        this.accEquip.head = id;
-        this.saveAcc();
-        setTimeout(() => { this.applyAcc(); this.refreshAccRows(); }, 80);
+        this.accEquip[deco.cat] = id;     // 按它自己的分类落槽（头饰/背饰）
       }
+      this.saveAcc();
+      setTimeout(() => { this.applyAcc(); this.refreshAccRows(); }, 80);
     }
     if (q.has('buyacc')) {
-      const id = q.get('buyacc');
-      if (accDef(id)) { this.accOwned.add(id); this.saveAcc(); }
+      /* 支持一次写多个：?buyacc=halo&buyacc=wing —— getAll 拿全，免得只生效第一个 */
+      for (const id of q.getAll('buyacc')) {
+        if (accDef(id)) this.accOwned.add(id);
+      }
+      this.saveAcc();
     }
     // ?bg=<key> 换背景、?bgpanel 直接掀开背景面板（都是为了无头截图能验到）
     if (q.has('bg')) {
@@ -1898,6 +2006,10 @@ class Game {
   openCharPanel() {
     this.hidePanels();
     this.dom.charPanel.classList.remove('hidden');
+    /* 重画仓库行：价格标签是"建 DOM 时"定死的（已拥有不标价），
+     * 光靠 refreshAccRows 切 class 是擦不掉价签的 —— 在商店里买完再回来
+     * 会看到"已拥有的还挂着价签"。这里重建一次最省心，面板又不是高频开关。 */
+    this.buildAccRows();
     // 30 个格子里把当前那只滚进视野，免得一打开停在一片空白上
     const on = this.dom.charGrid.querySelector('.charCell.on');
     if (on) on.scrollIntoView({ block: 'center' });
@@ -2180,10 +2292,12 @@ class Game {
     sound.pick();
   }
 
-  /** 把当前装备同步到 3D 角色身上 */
+  /** 把当前装备同步到 3D 角色身上（每个槽位各装各的） */
   applyAcc() {
-    const id = this.accEquip.head || null;
-    if (this.character) this.character.setAccessory(id);
+    if (!this.character) return;
+    for (const c of ACC_CATS) {
+      this.character.setAccessory(this.accEquip[c.key] || null, c.key);
+    }
   }
 
   setupShopPanel() {
@@ -2203,10 +2317,10 @@ class Game {
 
   closeShopPanel() { this.dom.shopPanel.classList.add('hidden'); }
 
-  /** 商店货架，分两栏：
+  /** 商店货架，分栏：
    *   角色 —— 只有带 price 的角色才上架（免费角色人人都有，摆出来没意义）；
    *           已拥有 → "用这个 / 使用中"；没买 → 价格按钮。
-   *   头饰 —— 装饰系统现在只有这一类，且**公告赠品不上架**（shopAccList 过滤）。
+   *   头饰 / 背饰 —— 一个分类一栏；**公告赠品不上架**（shopAccList 过滤）。
    *  买得起的按钮亮色、买不起压暗。 */
   refreshShopShelf() {
     const shelf = this.dom.shopShelf;
@@ -2233,9 +2347,12 @@ class Game {
       }).join(''));
     }
 
-    const items = shopAccList();
-    if (items.length) {
-      parts.push('<div class="shelfHead">头饰</div>');
+    /* 装饰按分类各起一个小标题（头饰 / 背饰）—— 一格槽位一排货，
+     * 玩家一眼能看清"这类有几个、我买了几个"，不用在混排里找。 */
+    for (const c of ACC_CATS) {
+      const items = shopAccList(c.key);
+      if (!items.length) continue;
+      parts.push(`<div class="shelfHead">${escapeHTML(c.name)}</div>`);
       parts.push(items.map((d) => {
         const owned = this.ownsAcc(d.id);
         const equipped = this.accEquip[d.cat] === d.id;
@@ -2245,8 +2362,12 @@ class Game {
             + `${equipped ? '已戴上' : '戴 上'}</button>`
           : `<button class="shopBtn2${afford ? '' : ' dim'}" data-buy="${d.id}">`
             + `${coinIco(18)}${d.price}</button>`;
+        /* fx 类没有贴图：给一张青蓝底的图标占位，别渲染出一个碎图 img */
+        const ico = ACC_IMG[d.img]
+          ? `<img class="shopIco" src="${ACC_IMG[d.img]}" alt="">`
+          : `<div class="shopIco fxico" aria-hidden="true">🔮</div>`;
         return `<div class="shopItem">
-          <img class="shopIco" src="${ACC_IMG[d.img] || ''}" alt="">
+          ${ico}
           <div class="shopMeta"><b>${escapeHTML(d.name)}</b><span>${escapeHTML(d.desc || '')}</span></div>
           ${btn}
         </div>`;
@@ -2296,11 +2417,9 @@ class Game {
     this._toastT = setTimeout(() => el.classList.remove('show'), 2000);
   }
 
-  /* ---------------- 角色面板里的装饰行 ---------------- */
-  /** 每个分类一行：不戴 + 全部装饰。没买的压暗（**不显示价格**），
-   *  点它直接跳去商店 —— 在"选角色"的地方顺手就能买，不用来回切面板。
-   *  价格只出现在商店里：选择界面要看的是"有哪些、现在戴的是哪个"，
-   *  价钱挤在缩略图上既挡脸又分心。 */
+  /* ---------------- 角色面板里的装饰行（仓库） ----------------
+   * 每个分类一行：不戴 + 全部装饰。**已拥有的看名字，未拥有的压暗 + 显示价格**，
+   * 点未拥有的直接跳去商店 —— 在"选角色"的地方顺手就能买，不用来回切面板。 */
   buildAccRows() {
     const bar = this.dom.accBar;
     if (!bar) return;
@@ -2314,11 +2433,18 @@ class Game {
         const owned = this.ownsAcc(d.id);
         const on = this.accEquip[cat.key] === d.id;
         const hint = d.notice ? '去公告领取' : '点它去商店';
+        /* 拥有 = 只显示名字；未拥有 = 名字下面挂一枚价签（赠品写"公告"） */
+        const tag = !owned
+          ? `<b class="accPrice">${d.notice ? '公告' : `${d.price} 奶币`}</b>`
+          : '';
+        const thumb = ACC_IMG[d.img]
+          ? `<i class="accThumb"><img src="${ACC_IMG[d.img]}" alt=""></i>`
+          : `<i class="accThumb fxico" aria-hidden="true">🔮</i>`;
         cells.push(`<button class="accCell${on ? ' on' : ''}${owned ? '' : ' locked'}"`
           + ` data-cat="${cat.key}" data-id="${d.id}"`
           + ` title="${escapeHTML(owned ? d.name : `${d.name}（未拥有 · ${hint}）`)}">`
-          + `<i class="accThumb"><img src="${ACC_IMG[d.img] || ''}" alt=""></i>`
-          + `<span>${escapeHTML(d.name)}</span></button>`);
+          + thumb
+          + `<span>${escapeHTML(d.name)}</span>${tag}</button>`);
       }
       return `<div class="accRow"><h4>${escapeHTML(cat.name)}</h4><div class="accGrid">${cells.join('')}</div></div>`;
     }).join('');
@@ -2372,10 +2498,16 @@ class Game {
       body.innerHTML = '<div class="rankEmpty">暂无公告<br>有新消息会第一时间在这里告诉大家</div>';
       return;
     }
-    body.innerHTML = NOTICE_ITEMS.map((it) => {
+    /* 置顶公告永远排第一（稳定排序：同 pinned 的保持原相对顺序） */
+    body.innerHTML = NOTICE_ITEMS.slice()
+      .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
+      .map((it) => {
       const lines = [];
       if (it.date) lines.push(`<div class="noticeDate">${escapeHTML(it.date)}</div>`);
-      if (it.title) lines.push(`<div class="noticeTitle">${escapeHTML(it.title)}</div>`);
+      if (it.title) {
+        lines.push(`<div class="noticeTitle">${it.pinned
+          ? '<i class="pinTag">置顶</i>' : ''}${escapeHTML(it.title)}</div>`);
+      }
       if (it.body) lines.push(`<div class="noticeBody">${escapeHTML(it.body)}</div>`);
       if (it.gift) {
         const got = this.giftClaimed(it.date, it.gift.id);
@@ -2462,8 +2594,8 @@ class Game {
       body.innerHTML = `
         <button class="supportBack ui-block" data-view="">← 返回</button>
         <div class="supportCard">
-          <a class="mailAddr" href="mailto:snnn@163.com">snnn@163.com</a>
-          <button class="supportBtn2 ui-block" data-copy="snnn@163.com">复 制 邮 箱</button>
+          <a class="mailAddr" href="mailto:snnn233@163.com">snnn233@163.com</a>
+          <button class="supportBtn2 ui-block" data-copy="snnn233@163.com">复 制 邮 箱</button>
         </div>`;
     } else if (this.supportView === 'pay') {
       body.innerHTML = `
@@ -2680,6 +2812,9 @@ class Game {
 
   /** 首次打开游戏、或公告版本比本机已读的更新 → 自动弹出公告栏 */
   maybeShowNotice() {
+    /* ?noann：无头截图时压住公告弹窗。file:// 下没法预置 localStorage，
+     * 每次拍图都会先弹一层公告挡住画面，加个开关省得每张图都要手动关。 */
+    if (this.q.has('noann')) return;
     let seen = null;
     try { seen = localStorage.getItem('jump3d_notice_seen'); } catch (e) { /* 忽略 */ }
     if (seen === NOTICE_VERSION) return;
@@ -2837,7 +2972,19 @@ class Game {
   resetWorld() {
     for (const p of this.platforms) p.dispose(this);
     this.platforms.length = 0;
-    for (const f of this.fx) { this.scene.remove(f.mesh); f.mesh.geometry.dispose(); f.mesh.material.dispose(); }
+    /* 清场：全局特效共用几何的场景里，同一份 BufferGeometry 只需 dispose 一次 ——
+     * 重复 dispose 同一份几何在多材质对象上是老坑（见 Platform.dispose 的教训）。 */
+    const sharedGeos = new Set();
+    for (const f of this.fx) {
+      this.scene.remove(f.mesh);
+      /* gif（Sprite）：共享几何不能 dispose（three 全局就一片），
+       * 独立纹理必须放掉（见 fx 清理处的同款注释） */
+      if (f.kind === 'gif') f.mesh.material.map.dispose();
+      else if (f.shared) sharedGeos.add(f.mesh.geometry);
+      else f.mesh.geometry.dispose();
+      f.mesh.material.dispose();
+    }
+    for (const geo of sharedGeos) geo.dispose();
     this.fx.length = 0;
     this.dom.popLayer.innerHTML = '';
 
@@ -2861,6 +3008,12 @@ class Game {
     this.slimeLv = 0;    // 粘液削减叠层
     this.frozenT = 0;    // 冻结剩余秒数（>0 = 人动不了）
     this.character.setFrozen(false);   // 上一局要是被冻着结束的，冰壳也别留到下局
+    /* 蜘蛛抓人/resetWorld：演出中途重开一局，覆盖层与状态机一并收掉 */
+    this.mjTimer = null;
+    this.mj = null;
+    if (this.dom.mjLayer) {
+      this.dom.mjLayer.classList.remove('show', 'fade');
+    }
     this.fallTimer = 0;
     this.punch = 0;
     this.lastJump = { trait: null, dist: 0, h: 0 };
@@ -2950,6 +3103,8 @@ class Game {
         trait = 'lure';
       } else if (Math.random() < CFG.milkChance) {
         trait = 'milk';
+      } else if (Math.random() < CFG.mjChance) {
+        trait = 'mj';
       } else if (Math.random() < CFG.movingChance) {
         trait = 'moving';
       }
@@ -2972,7 +3127,7 @@ class Game {
     if (trait === 'spring' || trait === 'peach') {
       kind = 'round';                       // 这两种砖的外观自带造型，用圆底
     } else if (trait === 'fragile' || trait === 'double'
-      || trait === 'slime' || trait === 'freeze' || trait === 'lure') {
+      || trait === 'slime' || trait === 'freeze' || trait === 'lure' || trait === 'mj') {
       kind = 'round';                       // 效果砖统一用圆底 + 顶面图案表达
     } else if (this.forceKind) {
       kind = this.forceKind;
@@ -3001,6 +3156,8 @@ class Game {
     if (trait === 'slime' && radius < 0.70) radius = 0.70;
     // 冰冰冰要冻住人 1.5 秒，落点同样给足余量，不去叠第二层惩罚
     if (trait === 'freeze' && radius < 0.70) radius = 0.70;
+    // MJ 砖：人要站满一秒等蜘蛛，落点给足余量（比负面砖的下限再宽一档）
+    if (trait === 'mj' && radius < 0.72) radius = 0.72;
     if (radius < 0.34) radius = 0.34;
 
     let height = 1.35 + Math.random() * 1.1;
@@ -3021,6 +3178,7 @@ class Game {
         : trait === 'freeze' ? 0x8FCBEF       // 冰冰冰：冰蓝（材质另配半透明，见 Platform）
         : trait === 'lure' ? 0xB47CE6         // 磁铁砖：紫（和"特殊图案"的紫区分开：更饱和）
         : trait === 'milk' ? 0xF2E3C4         // 奶块：奶油色砖身，顶面留白给蛙脸
+        : trait === 'mj' ? 0x3E4A78           // MJ 砖：夜幕蓝紫，衬砖上蜘蛛红的立体字母
         : PALETTE[(Math.random() * PALETTE.length) | 0],
     });
     this.platforms.push(p);
@@ -3219,6 +3377,171 @@ class Game {
     this.burst(new THREE.Vector3(at.x, 0.5, at.z), 0xE4F6FF, 10, 1.4, 0.05, 2.0);
   }
 
+  /* ---------------- 蜘蛛奶抓人（MJ 砖罚时的演出） ----------------
+   * 全程 state = 'mjgrab'：press()/release()/蓄力 tick 只认 ready|charging，
+   * 这个状态天然把输入挡在门外。演出分四幕，全部由 tick 推进（探针可测）：
+   *   drop  0.70s  蜘蛛从屏幕顶倒吊俯冲到角色头顶（加速落）
+   *   grab  0.25s  到位后抖两下，把人"拎"走（charRoot 隐藏）
+   *   rise  0.60s  抱着人缩回屏幕上方 → 转场：人摆到后方第 3 块砖上空
+   *   land  落体   人从空中掉回砖面，落地 squash + 尘土，回到 ready
+   * 覆盖层是 DOM（#mjLayer），pointer-events:none —— 纯演出不吃任何点击。 */
+  startSpiderGrab() {
+    if (this.state === 'mjgrab' || this.state === 'over' || this.state === 'start') return;
+    /* 蓄力中被抓：把蓄力状态收干净（与脆砖 onCrack 同款处理） */
+    if (this.state === 'charging') {
+      sound.stopCharge();
+      this.dom.bar.classList.remove('show');
+      this.power = 0;
+    }
+    this.combo = 0;
+    this.setCombo(0);
+    sound.fail();
+    this.buzz([30, 40, 30]);
+    this.blob.visible = false;
+    this.mj = { phase: 'drop', t: 0, from: this.current, fromY: 0, fromX: 0, target: null };
+    this.state = 'mjgrab';
+    this.dom.mjSpider.src = SPIDER_IMG;
+    this.dom.mjLayer.classList.remove('fade');
+    this.dom.mjLayer.classList.add('show');
+  }
+
+  /** 收摊：覆盖层藏掉、状态机清空（land 结束与 resetWorld 共用） */
+  endSpiderShow() {
+    this.dom.mjLayer.classList.remove('show', 'fade');
+    this.mj = null;
+  }
+
+  /** 角色（胸口高度）投到屏幕像素 —— 蜘蛛俯冲的目标点跟着人走 */
+  charScreenPos(out) {
+    const v = this._tmpV.set(
+      this.charRoot.position.x, this.charRoot.position.y + 0.75, this.charRoot.position.z
+    ).project(this.camera);
+    out.x = (v.x * 0.5 + 0.5) * window.innerWidth;
+    out.y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+    return out;
+  }
+
+  /** 蜘蛛图在屏幕上的高（px），由图片真实宽高比推出来（没解码完先给估值） */
+  mjSpiderH() {
+    const el = this.dom.mjSpider;
+    const w = 116;
+    return el.naturalWidth ? w * el.naturalHeight / el.naturalWidth : w * 1.4;
+  }
+
+  /** 摆蜘蛛：left/top = 蜘蛛中心；蛛丝从屏幕顶连到蜘蛛上缘 */
+  placeSpider(x, y) {
+    const half = this.mjSpiderH() / 2;
+    this.dom.mjSpider.style.left = `${x}px`;
+    this.dom.mjSpider.style.top = `${y}px`;
+    this.dom.mjSilk.style.left = `${x}px`;
+    this.dom.mjSilk.style.height = `${Math.max(0, y - half)}px`;
+  }
+
+  tickMjGrab(dt) {
+    const m = this.mj;
+    if (!m) { this.state = 'ready'; return; }
+    m.t += dt;
+    const P = { x: 0, y: 0 };
+    if (m.phase === 'drop') {
+      /* 目标点每帧重算：相机还在缓缓游移，跟着人走才贴得住 */
+      this.charScreenPos(P);
+      const k = clamp(m.t / 0.70, 0, 1);
+      this.placeSpider(P.x, lerp(-180, P.y, k * k));   // 平方缓动：越落越快
+      if (k >= 1) { m.phase = 'grab'; m.t = 0; m.fromY = P.y; m.fromX = P.x; }
+    } else if (m.phase === 'grab') {
+      /* 抓住抖两下，幅度随时间归零；抖完把人拎走 */
+      this.charScreenPos(P);
+      const jx = Math.sin(m.t * 58) * 4 * (1 - m.t / 0.25);
+      this.placeSpider(P.x + jx, P.y);
+      if (m.t >= 0.25) {
+        this.charRoot.visible = false;   // 人被抱走了
+        m.phase = 'rise'; m.t = 0;
+      }
+    } else if (m.phase === 'rise') {
+      const k = clamp(m.t / 0.60, 0, 1);
+      this.placeSpider(m.fromX, lerp(m.fromY, -180, k * k));
+      if (k >= 1) {
+        /* 落点：后方第 mjBackSteps 块砖（不足取最近）。
+         * platforms 有序，current 往前数即可；next 重排到目标砖的前一块
+         * （原链还在，玩家回头跳还能把场子捡回来）。 */
+        const idx = this.platforms.indexOf(m.from);
+        const ti = Math.max(0, idx - CFG.mjBackSteps);
+        const target = this.platforms[ti] || m.from;
+        this.current = target;
+        const ni = this.platforms.indexOf(target) + 1;
+        if (this.platforms[ni]) this.next = this.platforms[ni];
+        else this.spawnNext();
+        /* 人从砖心上空掉下来（land 阶段做落体 + 落地）；镜头自己会摇回去 */
+        this.charRoot.position.set(target.center.x, 2.6, target.center.z);
+        this.settle(0);
+        this.charRoot.visible = true;
+        m.target = target;
+        m.phase = 'land'; m.t = 0;
+        this.dom.mjLayer.classList.add('fade');   // 蜘蛛缩回天花板，淡出
+      }
+    } else if (m.phase === 'land') {
+      this.charRoot.position.y -= dt * 13;
+      if (this.charRoot.position.y <= 0) {
+        this.charRoot.position.y = 0;
+        this.settle(0.9);
+        m.target.kick(0.9);
+        this.ripple(new THREE.Vector3(m.target.center.x, 0.02, m.target.center.z), 0xFFFFFF, 0.9);
+        this.dust(new THREE.Vector3(m.target.center.x, 0, m.target.center.z), 0xE8EEFF, 6, 0.6);
+        sound.land();
+        this.popText(`被蜘蛛奶抱回了 ${CFG.mjBackSteps} 块砖…`, m.target.center, '#FF9AA8', 0.9, TIP);
+        this.faceCamera(new THREE.Vector3(
+          this.next.center.x - this.current.center.x, 0,
+          this.next.center.z - this.current.center.z
+        ).normalize());
+        this.blob.visible = true;   // blob 的跟随块只在 visible 时才跑，这里得手动请回来
+        this.endSpiderShow();
+        this.state = 'ready';
+      }
+    }
+  }
+
+  /* ---------------- 奶块大笑 GIF ----------------
+   * 笑声响起的同时，砖块上方浮出大笑奶蛙动图（Sprite，永远面向镜头）。
+   * ★ **独立纹理实例**：角色那只大笑奶蛙的雪碧图纹理由 character.js 持有并
+   *   逐帧改 offset/repeat —— 共用的话两边的帧号会互相打架（UV 冲突），
+   *   所以这里每次演出都现 load 一份自己的纹理，随 fx 一起销毁。 */
+  playLaughGif(center) {
+    const def = ANIM_CHARS && ANIM_CHARS.find((c) => c.key === 'laugh');
+    if (!def || !def.uri || !def.gw || !def.frames) return;
+    const tex = new THREE.TextureLoader().load(def.uri);
+    tex.generateMipmaps = false;   // 雪碧图禁 mipmap：高层采样会把隔壁帧的像素混进来
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+    const sp = new THREE.Sprite(mat);
+    const hgt = 1.05;
+    sp.scale.set(hgt * (def.w && def.h ? def.w / def.h : 1), hgt, 1);
+    /* y=2.3：角色高 1.48，GIF 底沿(2.3-0.53≈1.78)在头顶之上留出明显间隙，
+     * 不然动图像"骑在头上"；也没高到出画面（40° 视野下砖在下半屏） */
+    sp.position.set(center.x, 2.3, center.z);
+    sp.renderOrder = 9;
+    this.scene.add(sp);
+    this.fx.push({
+      mesh: sp, kind: 'gif',
+      life: CFG.laughGifSec, max: CFG.laughGifSec,
+      def, frame: 0, ft: 0,
+      durs: String(def.durs || '50').split(',').map((v) => Math.max(16, Number(v) || 50)),
+    });
+    this.setGifFrame(tex, def, 0);
+  }
+
+  /** 把雪碧图纹理切到第 i 帧（与 character.js _setFrame 同一套换算：
+   *  flipY 纵向反算 + 1px 内缩防串帧 —— 但操作的是调用方给的纹理实例）。 */
+  setGifFrame(tex, d, i) {
+    const cols = d.cols || 1, rows = d.rows || 1;
+    const INSET = 1;
+    const c = i % cols, r = Math.floor(i / cols) % rows;
+    const u0 = (c * (d.gw / cols) + INSET) / d.gw;
+    const v0 = (d.gh - (r * (d.gh / rows) + d.h) + INSET) / d.gh;
+    tex.repeat.set((d.w - 2 * INSET) / d.gw, (d.h - 2 * INSET) / d.gh);
+    tex.offset.set(u0, v0);
+  }
+
   /** HUD 上的常驻状态条：有没有弹簧助推、几层粘液削减。
    *  这两个数决定"你现在能跳多远"，不显示的话玩家会以为是游戏坏了。
    *  弹簧助推只有一层，所以不画 ◆ 计数，直接写名字。 */
@@ -3241,6 +3564,7 @@ class Game {
       this.current.kick(0.5);
       this.ripple(land, 0xFFFFFF, 0.7);
       this.dust(land, 0xD8E2FF, 6, 0.55);
+      if (this.hasFx('magic')) this.landmagic(land);
       sound.land();
       this.popText('原地跳', land, '#B9C4E8');
       this.combo = 0;
@@ -3273,6 +3597,8 @@ class Game {
       }
       this.ripple(land, springy ? 0x9BE8D8 : 0xFFFFFF, 1);
       this.dust(land, 0xE8EEFF, 7, 0.7);
+      /* 落地特效用**脚下砖面**做原点（不是砖中心）—— 魔法阵就该从踩到的地方铺开 */
+      if (this.hasFx('magic')) this.landmagic(land);
       this.camDip += 0.16 * hard;
       this.camKick += 0.05 * hard;
 
@@ -3332,12 +3658,23 @@ class Game {
         /* 冰冰冰：把角色冻住 1.5 秒 —— 不是减射程，是"你根本动不了"。
          * 拿不回控制权的这 1.5 秒里，脚下要是有脆砖倒计时在跑，就特别难受。 */
         this.freezeChar();
+      } else if (target.trait === 'mj') {
+        /* MJ 砖：不给分、不报喜 —— 站满 mjDwell 秒，蜘蛛奶从屏幕上方倒吊下来
+         * 把人抓走、扔回后方几块砖。计时在 tick 里走（ready/charging 才倒数），
+         * 跳走即作废 —— 想不被抓就别恋战。 */
+        this.mjTimer = CFG.mjDwell;
+        this.popText(`MJ 砖  站满 ${CFG.mjDwell.toFixed(0)} 秒会被抓走`, target.center, '#FF9AA8', 0.80, TIP);
       } else if (target.trait === 'milk') {
         /* 奶块：砖面上印着经典奶蛙的脸，不给分也不给状态。
          * 但会**放一声大笑** —— 这是玩家自己提供的音源，"跳到奶块就笑"。
-         * 连 +0 的飘字都不弹，它就该是"路过一块可爱的砖"。 */
+         * 2026-10-04 起笑声不再是独角戏：砖块上方同时浮出大笑奶蛙的动图，
+         * 同受「奶块大笑」开关控制（声停图也散）。连 +0 的飘字都不弹，
+         * 它就该是"路过一块可爱的砖"。 */
         this.perfectBurst(target.center, 0xFFF0CC);
-        if (this.settingOn('laugh')) sound.laugh();
+        if (this.settingOn('laugh')) {
+          sound.laugh();
+          this.playLaughGif(target.center);
+        }
       } else if (target.trait === 'lure') {
         /* 磁铁砖：效果在下一次起跳（落点被拽向砖心），这里只报喜 */
         this.popText('磁铁砖  下一跳自动对准', target.center, '#D8B6FF', 0.80, TIP);
@@ -3378,6 +3715,9 @@ class Game {
       this.score += gain;
       this.updateScoreUI();
       this.current = target;
+      /* 落到别的砖就撤销蜘蛛计时（MJ 分支上面已经重新武装；原地跳不经过这里，
+       * 所以"站在 MJ 砖上原地跳"计时照走 —— 人没挪窝，罚时理应继续）。 */
+      if (target.trait !== 'mj') this.mjTimer = null;
       this.spawnNext();
       this.state = 'ready';
       return;
@@ -3453,6 +3793,11 @@ class Game {
   gameOver() {
     this.state = 'over';
     this.platforms.forEach((p) => { p.group.visible = true; });
+    /* 奶币加分：本局捡到的每 1 枚，**分数** +coinBonusPoint（用户点名要的）。
+     * ★ 必须赶在"有没有破纪录"的判定之前并入 this.score —— 否则结算页显示
+     *   加了分，但 best 记的还是没有奶币加分的旧值，两边对不上。 */
+    const coinPoint = this.runCoins * CFG.coinBonusPoint;
+    if (coinPoint > 0) this.score += coinPoint;
     if (this.score > this.best) {
       this.best = this.score;
       localStorage.setItem('jump3d_best', String(this.best));
@@ -3463,6 +3808,11 @@ class Game {
     this.dom.best.textContent = this.best;
     this.dom.overScore.textContent = this.score;
     this.dom.overBest.textContent = this.best;
+    /* 分数明细：有奶币加分就补一行，让人知道多出来的分是捡币赚的。 */
+    if (this.dom.overCoinPoint) {
+      this.dom.overCoinPoint.textContent = coinPoint > 0
+        ? `${coinIco(16)} 捡到 ${this.runCoins} 枚 · 分数 +${coinPoint}` : '';
+    }
     if (this.dom.overPeach) {
       this.dom.overPeach.textContent = this.peaches > 0 ? `🍑 黄桃 ×${this.peaches}` : '';
     }
@@ -3663,6 +4013,112 @@ class Game {
     this.burst(new THREE.Vector3(pos.x, 0.05, pos.z), color, count, speed, 0.038, 0.75);
   }
 
+  /* ---------------- 落地特效：魔法阵（装备 fx_magic 时自动播） ----------------
+   * 设计取向：**脚下浮现一圈魔法阵**，贴地、旋转、扩散、淡出。
+   * 结构分三层（都是贴地的平面几何，y 略有高低差避免 z-fighting）：
+   *   1) 外圈符文环：RingGeometry，青紫色，边旋转边缓慢放大；
+   *   2) 内圈法阵盘：细环 + 中心一个实心小圆，交代"阵眼"；
+   *   3) 阵纹射线：几根细长三角，从阵眼向外放射 —— 有了它才读得出"魔法阵"
+   *      而不是"地上画了俩圆"。
+   * 表现要点：
+   *   · 整体 **旋转 + 扩张**，生命比普通尘土长（≈0.9s）—— 魔法阵是"缓缓浮现"的，
+   *     太快会像一圈涟漪刷地没了；
+   *   · 颜色走**青紫魔幻色**（0x9C7BFF / 0x5EE8FF），和场景的暖色砖面拉得开；
+   *   · 全用 MeshBasicMaterial（不受光）：贴地的发光图案不该被砖面阴影影响，
+   *     而且这些几何要么是薄环要么是薄片，受光反而会暗下去看不清。
+   * ★ 圆心始终落在**踩到的位置**（不是砖心），和水花同一个原点上。 */
+  landmagic(pos) {
+    /* fx 条目的工厂：魔法阵各层都靠"旋转 + 放大 + 淡出"表现，字段统一。
+     * ★ 必须定义在 flat 之前 —— flat 里会调它。 */
+    const m2fx = (m) => ({ mesh: m, life: 0.92, max: 0.92, kind: 'magic', spin: 0, grow: 1 });
+    /* 公用：贴地的圆环，绕 X 轴放平。rot0 记下初始 rotation.z ——
+     *  tick 里的旋转是在这个基准角上叠加的，不记的话射线会跳回 0。
+     *  ★ 返回 fx 记录（不是 mesh）：各层的 grow / spin 都要当场设，
+     *    以免回头用 this.fx[this.fx.length-1] 反查（那玩意一层写错就崩）。 */
+    const flat = (geo, mat, y, rot) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.rotation.x = -Math.PI / 2;
+      if (rot) m.rotation.z = rot;
+      m.userData.rot0 = rot || 0;
+      m.position.set(pos.x, y, pos.z);
+      m.renderOrder = 5;
+      this.scene.add(m);
+      const f = m2fx(m);
+      this.fx.push(f);
+      return f;
+    };
+
+    const violet = 0x9C7BFF, cyan = 0x5EE8FF, pale = 0xE4D8FF;
+
+    /* 1) 外圈符文环：较粗、最亮，承担"阵"的轮廓 */
+    const ring = flat(
+      new THREE.RingGeometry(0.40, 0.50, 48),
+      new THREE.MeshBasicMaterial({
+        color: violet, transparent: true, opacity: 0.9,
+        side: THREE.DoubleSide, depthWrite: false,
+      }),
+      0.030
+    );
+    ring.grow = 1.35;          // 外圈扩得最多
+    ring.spin = 0.9;
+
+    /* 2) 内圈细环 + 阵眼实心圆 */
+    const inner = flat(
+      new THREE.RingGeometry(0.20, 0.235, 36),
+      new THREE.MeshBasicMaterial({
+        color: cyan, transparent: true, opacity: 0.85,
+        side: THREE.DoubleSide, depthWrite: false,
+      }),
+      0.026
+    );
+    inner.grow = 1.1;
+    inner.spin = -1.4;         // 内外反向转，才有"法阵在运转"的感觉
+
+    const core = flat(
+      new THREE.CircleGeometry(0.085, 24),
+      new THREE.MeshBasicMaterial({
+        color: pale, transparent: true, opacity: 0.95, depthWrite: false,
+      }),
+      0.022
+    );
+    core.grow = 1.0;
+    core.spin = 2.2;
+
+    /* 3) 阵纹射线：6 根细长的等腰三角，从阵眼向外放射 */
+    const spoke = new THREE.PlaneGeometry(0.045, 0.20);   // 底宽 × 长
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const sp = new THREE.Mesh(spoke, new THREE.MeshBasicMaterial({
+        color: cyan, transparent: true, opacity: 0.8,
+        side: THREE.DoubleSide, depthWrite: false,
+      }));
+      /* 三角形放平后：长边沿径向，所以先绕 Y 转到角度，再整体放平。
+       * 先 rot.x = -90° 把面朝上，再 rot.z 承担"绕世界 Y 轴"的旋转。 */
+      sp.rotation.x = -Math.PI / 2;
+      sp.rotation.z = a;
+      sp.userData.rot0 = a;       // tick 里叠加旋转的基准角
+      sp.position.set(
+        pos.x + Math.cos(a) * 0.30,
+        0.028,
+        pos.z + Math.sin(a) * 0.30
+      );
+      sp.renderOrder = 5;
+      this.scene.add(sp);
+      const f = m2fx(sp);
+      f.grow = 1.18;
+      f.spin = 0.6;
+      this.fx.push(f);
+    }
+    /* 射线是整组一起转的，这里给它们各记一份角度即可（tick 里按 spin 转）。 */
+  }
+
+  /** 当前装备的是不是某类落地特效；没装备 / 装的是别的就返回 false。
+   *  走 accDef 查表而不是硬编码 id，以后加别的特效不用改这里。 */
+  hasFx(kind) {
+    const deco = accDef(this.accEquip && this.accEquip.fx);
+    return !!(deco && deco.fx === kind);
+  }
+
   camPunch() { this.punch = 0.16; }
 
   /* ---------------- 主循环 ---------------- */
@@ -3693,6 +4149,22 @@ class Game {
       this.frozenT -= dt;
       if (this.frozenT <= 0) this.thawChar();
     }
+
+    /* MJ 砖计时：站在 MJ 砖上（ready/charging 都算"站着"）才倒数，
+     * 跳走即作废。走满 → 蜘蛛奶登场（mjgrab 状态机接管）。 */
+    if (this.mjTimer != null) {
+      if (this.current && this.current.trait === 'mj'
+        && (this.state === 'ready' || this.state === 'charging')) {
+        this.mjTimer -= dt;
+        if (this.mjTimer <= 0) {
+          this.mjTimer = null;
+          this.startSpiderGrab();
+        }
+      } else if (this.state !== 'mjgrab') {
+        this.mjTimer = null;
+      }
+    }
+    if (this.state === 'mjgrab') this.tickMjGrab(dt);
 
     if (this.chargeTarget != null && this.state === 'charging' && this.power >= this.chargeTarget) {
       this.chargeTarget = null;
@@ -3820,15 +4292,43 @@ class Game {
       if (f.kind === 'ring') {
         f.mesh.scale.setScalar(1 + k * 3.4 * (f.scale || 1));
         f.mesh.material.opacity = 0.75 * (1 - k);
+      } else if (f.kind === 'magic') {
+        /* 魔法阵：**旋转 + 扩张 + 淡出**。三层各自 spin/grow 不同（外圈扩得多、
+         *  内圈反向转），合起来才像"法阵在运转"。
+         *  透明度用 1-k 的平方：前半段保持明亮（"阵"读得清楚），后半段加速消失，
+         *  不会在砖上拖一条若有若无的残影。 */
+        f.mesh.rotation.z = (f.mesh.userData.rot0 || 0) + k * (f.spin || 0) * 2.2;
+        const g = 1 + k * ((f.grow || 1) - 1);
+        f.mesh.scale.set(g, g, 1);
+        f.mesh.material.opacity = (1 - k) * (1 - k) * 0.92;
+      } else if (f.kind === 'gif') {
+        /* 大笑 GIF：按 GIF 自己的帧表推进（durs 照抄原 GIF 节奏，不均匀），
+         * 结尾 15% 时间线性淡出 —— 声停图也散。 */
+        f.ft += dt * 1000;
+        let guard = 0;
+        while (guard++ < 8 && f.ft >= f.durs[f.frame]) {
+          f.ft -= f.durs[f.frame];
+          f.frame = (f.frame + 1) % f.def.frames;
+          this.setGifFrame(f.mesh.material.map, f.def, f.frame);
+        }
+        const kg = 1 - f.life / f.max;
+        f.mesh.material.opacity = kg > 0.85 ? (1 - kg) / 0.15 : 1;
       } else {
         f.vel.y -= 9 * dt;
         f.mesh.position.addScaledVector(f.vel, dt);
+        /* 记下初始角度，魔法阵的旋转是在它之上叠加的（见 magic 分支）。 */
         f.mesh.material.opacity = 0.95 * (1 - k);
         f.mesh.scale.setScalar(1 - k * 0.4);
       }
       if (f.life <= 0) {
         this.scene.remove(f.mesh);
-        f.mesh.geometry.dispose();
+        /* 水珠共用一份几何（每次落地新建 20 个球太费）—— 只 dispose 材质，
+         *  几何体由下一次特效复用 / 由 resetWorld 统一清。
+         *  gif（Sprite）的 geometry 是 three 内部**全局共享**的一片矩形，
+         *  dispose 了所有 Sprite 一起瞎 —— 它不清；纹理是每次演出现 load
+         *  的独立实例，必须在这里放掉，不然笑一次漏一张。 */
+        if (f.kind === 'gif') f.mesh.material.map.dispose();
+        else if (!f.shared) f.mesh.geometry.dispose();
         f.mesh.material.dispose();
         this.fx.splice(i, 1);
       }
@@ -3928,4 +4428,12 @@ window.addEventListener('DOMContentLoaded', () => {
   window.__CFG = CFG;
   window.__game = new Game();
   window.__sound = sound;
+  window.__clipVol = CLIP_VOL;   // 探针断言大笑/叮叮叮音量调低过
+  window.__acc = { def: accDef, list: accList, cats: ACC_CATS, box: ACC_BOX };   // 探针查装饰定义用
+  /* 角色清单也给一份：探针要按 key 点名断言（"某个新抠的角色到底进没进清单"），
+   * 只看格子数量的话，缺一只、多一只都可能互相抵消看不出来。 */
+  window.__chars = { list: charList, def: charDef };
+  /* 特效探针要构造一个坐标（landmagic 需要一个 Vector3）—— 顺手把 THREE 借出去，
+   * 免得探针自己再 import 一份、或者退化成传裸对象 {x,y,z} 的假测试。 */
+  window.__THREE = THREE;
 });

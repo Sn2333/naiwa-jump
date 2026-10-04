@@ -8,6 +8,13 @@
 所以判据从"黄度差 R-B"换成"与背景色的最大通道差 + Otsu 自适应阈值"，
 再用连通域面积过滤掉水印/星点这类零碎前景。
 
+个别图还要再加一道专门判据（见 OVERRIDE）：
+  · warm / warmOnly / darkOrColor / strictSat / noSat / tol —— 逐张换主判据
+  · chairLum —— 连家具一起抠（白椅 + 白底对比极弱，靠"饱和度 ∪ 比背景暗"）
+  · trimGround —— 削掉主体底下那层接地软阴影（颜色和本体几乎一样，只能靠形状）
+  · trimShadow / unfillBg —— 角色底部阴影、被腿包住的背景口袋
+  · bandSat / armrestCut —— 分带饱和度、几何斜切（当前无角色使用，保留备用）
+
 用法：
     python dev/extract_chars.py            # 全量
     python dev/extract_chars.py --sheet    # 顺便拼一张联系表方便肉眼检查
@@ -111,8 +118,10 @@ def inpaint_watermark(img, box=WM_BOX, k=WM_K, diff=WM_DIFF):
     img[y0:y1, x0:x1] = np.where(m[..., None], med, sub)
 
 
-# 顺序沿用用户给的清单；经典奶蛙是初始角色
+# 顺序沿用用户给的清单；经典奶蛙是初始角色 —— ★ 用户要求它排在最上面（第一格），
+# 所以放在列表首位，别按"随手加在末尾"的老习惯摆。
 CHARS = [
+    ("frog", "经典奶蛙", "经典奶蛙.webp"),
     ("poop", "奶屎", "奶屎.jpg"),
     ("angry", "奶怒", "奶怒.jpg"),
     ("dolphin", "奶豚", "奶豚.jpg"),
@@ -142,14 +151,66 @@ CHARS = [
     ("mouse", "奶鼠", "奶鼠.jpg"),
     ("rabbit", "奶兔", "奶兔.jpg"),
     ("egg", "奶蛋", "奶蛋.jpg"),
-    ("frog", "经典奶蛙", "经典奶蛙.webp"),
     ("angry2", "奶怒2", "奶怒2.jpg"),
     ("beng", "奶绷", "奶绷.jpg"),
     ("bigmilk", "大奶", "大奶.jpg"),
     ("hao", "奶豪", "奶豪.jpg"),
     ("fight", "格斗准备奶蛙", "格斗准备奶蛙.jpg"),
+    # ---- 2026-10-04 后加的四张：都是干净白底棚拍 ----
+    ("boss", "奶霸", "奶霸.jpg"),
+    ("peace", "小奶比耶", "小奶比耶.jpg"),
+    ("think", "托脸奶蛙", "托脸奶蛙.jpg"),
+    ("holiday", "假日威龙奶", "假日威龙奶.png"),
+    # ---- 2026-10-04 又加的三张 ----
+    #  奶罐：横陈的一条超长奶蛙（头在左、身子一路抻到右），背景纯白。
+    #  隐忍奶蛙：握拳隐忍的表情，背景白中带一点点米（右上角），Otsu 够用。
+    #  超长长长奶蛙：**不是抠图**，是把经典奶蛙横向压细 + 纵向拉长（见 derive_skinny）。
+    ("milkjar", "奶罐", "奶罐.jpg"),
+    ("endure", "隐忍奶蛙", "隐忍奶蛙.jpeg"),
+    ("skinny", "超长长长奶蛙", "经典奶蛙.webp"),
 ]
+
 DEFAULT_CHAR = "frog"
+
+# ---- 派生角色：不抠图，直接拿一张已有贴图做形变 ----
+# 超长长长奶蛙 = 经典奶蛙**横向压到 0.34 + 纵向拉到 2 倍**。
+#   压多细是量出来的：太粗（>0.5）看不出"超长"这个梗；太细（<0.25）脸糊成一竖条，
+#   两只眼睛挤在一起认不出是谁。0.34 时宽度 218 → 74px，一眼能认出"这是经典奶蛙"。
+#   纵向 ×2 是用户 2026-10-04 点名要的（"宽不变，再拉高至当前的两倍"）——
+#   所以最终贴图 = 74 × 840。
+#   ★ 纵向拉长会让角色**比别的角色高一倍**（所有角色按高度统一摆放在 CFG.height），
+#     这是刻意的：名字叫"超长长长"，就是要它显眼地高出来一截。
+SKINNY_SX = 0.34
+SKINNY_SY = 2.0
+DERIVE = {
+    "skinny": {"from": "frog", "sx": SKINNY_SX, "sy": SKINNY_SY},
+}
+
+
+def derive_skinny(src_png, sx, sy=1.0):
+    """把一张已有角色贴图做形变（横向 sx、纵向 sy），重算 meta。
+
+    sx<1 压扁 / sy>1 拉长，两者独立。派生角色的 baseline / foot 都必须**按形变
+    之后的新尺寸重量** —— 沿用原图的值会让落脚判定和看到的不一致。
+    重采样后 alpha 边缘会软一点，照 cutout 的做法把极低 alpha 清成 0，
+    免得补间出来的半透明描边在深色砖上显出一圈毛边。"""
+    im = Image.open(src_png).convert("RGBA")
+    w, h = im.size
+    nw = max(2, int(round(w * sx)))
+    nh = max(2, int(round(h * sy)))
+    out = im.resize((nw, nh), Image.LANCZOS)
+    px = np.asarray(out).copy()
+    px[..., 3] = np.where(px[..., 3] < 12, 0, px[..., 3])
+    out = Image.fromarray(px, "RGBA")
+    baseline = 1.0
+    meta = {
+        "w": nw,
+        "h": nh,
+        "aspect": round(nw / nh, 5),
+        "baseline": round(float(baseline), 5),
+        "foot": round(measure_foot(out, baseline), 4),
+    }
+    return out, meta
 
 # 个别图要手工压阈值：光晕/白毛这类与背景对比弱或带大面积渐变的
 OVERRIDE = {
@@ -191,13 +252,28 @@ OVERRIDE = {
     # 不用 estimate_bg + Otsu 那套，是因为角色身上有大片**接近中性**的浅黄高光
     # （头顶那圈 R-G 只有 5 上下），Otsu 的阈值一压就把它啃掉 —— 第一版把大奶的
     # 头顶啃出一排锯口。改成只看 R-B：背景 0~3、蛙身 40 起步，中间空得很。
-    "bigmilk": {"warm": {"rb": 20}, "unfillBg": {"from": 0.45}, "trimShadow": (0.12, 0.12)},
+    "bigmilk": {"warm": {"rb": 20}, "unfillBg": {"from": 0.45, "bgSwapDist": 70},
+                "trimShadow": (0.12, 0.12)},
     "fight": {"warm": {"rb": 20}},
     # 奶豪：黑卫衣 + 白底 + 白 W 印花。白 W 和白底同色，色差法必然把它当背景，
     # 但它被卫衣整个包住 → 是个"孔"，后面的 fill_holes 会填回来（实测有效）。
     # 所以这里只需要"有颜色、或者非常暗"：卫衣黑（mx≈2）走暗那支，
     # 黄脸 / 绿眼走饱和那支，白底与白 W 两支都不沾 —— 让 W 当孔再填。
     "hao": {"strictSat": True, "minSat": 0.12, "darkOrColor": True},
+    # 奶霸：白底棚拍，角色**坐在一把白色沙发椅里**（仰躺翘脚、手托下巴）。
+    # ★ 2026-10-04 二次修订：用户要求**整张椅子保留** —— 于是从"清椅子"翻转成
+    #   "保椅子"。原来那套把椅子切掉的写法已不用（分带饱和度 bandSat + 几何斜切
+    #   扶手 armrestCut 两个判据本身保留在 cutout 里，将来遇到"要去掉家具"的图还能用）。
+    #
+    #   难点在于**白椅 + 白底**对比极弱：椅身 209~238、背景 254~255，中间还夹着
+    #   一层 225~245 的接触阴影与右下角小红书水印 —— 靠"与背景色差 + Otsu"必然
+    #   把椅子当背景切掉（第一版就是这样，椅子整个消失）。
+    #   实测能用的分割只有两个维度：
+    #     · 饱和度：黄身 / 橄榄绿脚 sat 0.4~0.7；
+    #     · 亮度：椅身、木扶手、椅脚、接触阴影 sat 全 <0.10，但**都比背景暗**。
+    #   所以判据取并集：`sat > 0.10 或 亮度 < 240`。门槛 240 是量出来的（见 chairLum）：
+    #     246 会收进 1542px 水印+底垫，240 只剩 55px，232 就干净但开始啃椅脚高光。
+    "boss": {"chairLum": 240, "trimGround": (0.12, 0.82)},
 }
 
 
@@ -306,7 +382,17 @@ def cutout(path, key):
 
     t = ov.get("tol", int(np.clip(otsu(d.reshape(-1)), 14, 72)))
 
-    if ov.get("warm"):
+    if ov.get("chairLum"):
+        # 奶霸专用：**连椅子一起抠**。黄身/橄榄绿脚靠饱和度、白椅/木扶手/椅脚/
+        # 接触阴影靠"比背景暗"，两个维度取并集 —— 与默认那套（色差 d + Otsu）
+        # 完全不同，所以这里是**整体替换** m，不是往 m 上再 `&=`。
+        # 阈值 240 见 OVERRIDE 里的说明（量出来 246→1542px 脏、240→55px、232 啃椅脚）。
+        mx = img.max(axis=2)
+        mn = img.min(axis=2)
+        sat = (mx - mn) / np.maximum(mx, 1.0)
+        m = (sat > 0.10) | (mx < ov["chairLum"])
+        m = ndimage.binary_opening(m, np.ones((3, 3), bool))
+    elif ov.get("warm"):
         # 整套"与背景色差"逻辑都绕开：背景太花（虚化树叶）或背景与角色亮度太近
         # （白底 + 浅黄高光），只有颜色倾向这一个维度是可靠的。
         w = ov["warm"]
@@ -316,7 +402,8 @@ def cutout(path, key):
     else:
         m = d > t
 
-    m = ndimage.binary_opening(m, np.ones((3, 3), bool))
+    if not ov.get("chairLum"):
+        m = ndimage.binary_opening(m, np.ones((3, 3), bool))
 
     if ov.get("warmOnly"):
         # 奶双鱼：那一圈光晕比深蓝星空还亮，跟角色的色差甚至比背景更大，
@@ -332,6 +419,21 @@ def cutout(path, key):
         mn = img.min(axis=2)
         sat = (mx - mn) / np.maximum(mx, 1.0)
         m &= (sat > ov.get("minSat", 0.10)) | (mx < 115.0)
+    elif ov.get("bandSat"):
+        # 分带饱和度门槛：按"画面高度比例"给不同门槛，取第一个 from ≤ y 的档。
+        # 档位按 from 升序排列，末档 from 缺省 = 0。
+        # ★ 目前**无角色使用**（奶霸改"保椅子"后不再走这条路），保留备用 ——
+        #   适合"同一主体不同部位饱和度差异大、全局阈值二选一"的场景。
+        mx = img.max(axis=2)
+        mn = img.min(axis=2)
+        sat = (mx - mn) / np.maximum(mx, 1.0)
+        yy = (np.arange(H, dtype=np.float32) / H)[:, None]
+        thr = np.zeros((H, 1), np.float32)
+        bands = sorted(ov["bandSat"], key=lambda b: -b.get("from", 0.0))
+        thr[:] = bands[-1]["minSat"]
+        for b in bands:
+            thr = np.where(yy >= b.get("from", 0.0), np.float32(b["minSat"]), thr)
+        m &= sat > thr
     elif ov.get("strictSat"):
         # 只要"有颜色"。经典奶蛙脚边有一大片深灰台面、奶蛋脚下有浅灰台面
         # 加两处水印，它们虽然"和背景不一样"但几乎没有色彩，用严格判据一刀切掉。
@@ -376,10 +478,64 @@ def cutout(path, key):
         keep = (img[..., 0] - img[..., 2]) > w["rb"]
         if "rg" in w:
             keep &= (img[..., 0] - img[..., 1]) > w["rg"]
+        # ★ 2026-10-04 补：两腿**之间**那块背景是「白底 + 角色投影」的过渡带，
+        #   实测像素是暖米白（如 243,232,215），R-B 高达 28~32 —— 光靠 rb 阈值
+        #   （20）只切掉一半，另一半留在腿上，玩家反馈"两脚之间没抠干净"。
+        #   换成**与背景色的欧氏距离**判据就干净了：过渡带离背景 ~41，
+        #   而角色最浅的肚皮也有 133，中间空得很（bgSwapDist=70 落在正中）。
+        #   只在 unfillBg 的生效区（下半图）里加，白眼球在上半图不受影响。
+        if "bgSwapDist" in ov["unfillBg"]:
+            bgc = np.array(ov.get("bgColor", (251, 251, 251)), dtype=float)
+            dist = np.sqrt(((img[:, :, :3].astype(float) - bgc) ** 2).sum(axis=2))
+            keep |= dist > ov["unfillBg"]["bgSwapDist"]
+        if "bgSwapSat" in ov["unfillBg"]:
+            smin = ov["unfillBg"]["bgSwapSat"]
+            mx = img.max(axis=2)
+            mn = img.min(axis=2)
+            neu = (mx - mn) < smin            # 中性：白底与投影都是这一支
+            keep |= neu
         frm = ov["unfillBg"]
         cut = int(H * (frm["from"] if isinstance(frm, dict) else 0.0))
         m[cut:, :] &= keep[cut:, :]
+
+    if ov.get("armrestCut"):
+        # 几何斜切：把"在主体轮廓之外横插出来"的干扰物削掉。
+        # ★ 目前**无角色使用**（奶霸改"保椅子"后不再走这条路），保留备用 ——
+        #   当初是给"奶霸 + 扶手木条"设计的，适合"干扰物卡在两个阈值之间、
+        #   任何全局判据都会误伤其一"的场景。
+        c = ov["armrestCut"]
+        xn = (np.arange(W, dtype=np.float32) / W)[None, :]
+        yb = np.where(xn <= c["x0"], c["yLeft"],
+                      np.where(xn <= c["x1"],
+                               c["yA"] + (xn - c["x0"]) / max(c["x1"] - c["x0"], 1e-6) * (c["yB"] - c["yA"]),
+                               c["yB"]))
+        inband = (np.arange(H, dtype=np.float32)[:, None] >= c["y0"] * H) & \
+                 (np.arange(H, dtype=np.float32)[:, None] < c["y1"] * H)
+        cutm = (xn >= c["x0"]) & inband & ((np.arange(H, dtype=np.float32)[:, None] / H) > yb)
+        # 角色在 x ≥ x1 处**完全没有像素**（实测黄身最右只到 0.895），所以带内
+        # 这一竖条无条件清零 —— 扶手那根木条会从肘部继续往右伸出去，光靠下沿
+        # 曲线切不掉（木条顶端比曲线还高）。
+        if c.get("xHard") is not None:
+            cutm |= inband & (xn >= c["xHard"])
+        m &= ~cutm
+
     m = drop_flat_bottom(m)
+
+    if ov.get("trimGround"):
+        # 奶霸专用：椅脚底下那层**接地软阴影**。颜色和椅子本体几乎一样（sat<0.10、
+        # 亮度 225~238），任何阈值都分不开 —— 但形状上它必是"贴着画面底边、又扁又宽"
+        # 的一条，而且**上沿比椅脚的真实轮廓低**。做法：统计每行前景宽度，从底边
+        # 往上找到第一个"宽度相对上一行骤缩"的位置，那里就是椅脚落地线；线以下清零。
+        # 只在画面最下方 band 这段里找，免得把椅子中段的正常收窄误判成底边。
+        band, shrink = ov["trimGround"]
+        y0 = int(H * (1.0 - band))
+        widths = m[y0:].sum(axis=1).astype(np.float32)
+        cut = H
+        for i in range(1, len(widths)):
+            if widths[i - 1] > 8 and widths[i] < widths[i - 1] * shrink:
+                cut = y0 + i
+                break
+        m[cut:, :] = False
 
     if ov.get("trimShadow"):
         # 角色底下的接触阴影：颜色是被角色反射光染暖的灰，和角色本体的深色边缘
@@ -510,6 +666,24 @@ def main():
     tiles = []
     for key, name, fn in CHARS:
         if only and key not in only:
+            continue
+        if key in DERIVE:
+            # 派生角色：拿源角色的 PNG 做形变，不走抠图（源不存在就跳过）
+            src_png = OUT_DIR / (DERIVE[key]["from"] + ".png")
+            if not src_png.exists():
+                print("跳过派生 %s（源 %s 不存在）" % (key, DERIVE[key]["from"]))
+                continue
+            d = DERIVE[key]
+            im, meta = derive_skinny(src_png, d["sx"], d.get("sy", 1.0))
+            png = OUT_DIR / (key + ".png")
+            webp = OUT_DIR / (key + ".webp")
+            im.save(png, optimize=True)
+            im.save(webp, quality=WEBP_Q, method=6)
+            cache[key] = {"key": key, "name": name, **meta}
+            tiles.append((key, im))
+            print("%-12s %-6s 由 %s 横向 x%.2f / 纵向 x%.2f  %dx%d  %4.0fKB  foot=%.3f"
+                  % (key, name, d["from"], d["sx"], d.get("sy", 1.0),
+                     meta["w"], meta["h"], webp.stat().st_size / 1024, meta["foot"]))
             continue
         p = SRC / fn
         if not p.exists():
