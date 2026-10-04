@@ -374,12 +374,12 @@ if (location.search.indexOf('dbg') >= 0) {
     touch-action: pan-y;
   }
 
-  /* ---------------- 装饰行（角色面板顶部） ----------------
-   * 不占主滚动区：#charGrid 是 flex:1 的滚动容器，装饰行固定在它上面，
-   * 选角色时滚到底也不会把装饰行滚走 —— 换角色、换帽子是两件事，别互相挤。 */
-  #accBar {
-    width: min(760px, 94vw); margin-bottom: 10px; pointer-events: auto;
-  }
+  /* ---------------- 装饰行（并入角色滚动区顶部） ----------------
+   * 原来固定在 #charGrid 上方：三行装扮（头饰/背饰/特效）把角色格子挤到只剩
+   * 一条缝，线上实测"装扮挡住角色选择"。现在并进滚动流 —— #charGrid 是 grid，
+   * 装扮区用 grid-column: 1/-1 占满整行、跟角色格子一起滚，谁也不挡谁。 */
+  #accBar { margin-bottom: 4px; pointer-events: auto; }
+  #charGrid > #accBar { grid-column: 1 / -1; }
   #accBar:empty { display: none; }
   #accBar h4 {
     margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 2px;
@@ -893,8 +893,9 @@ if (location.search.indexOf('dbg') >= 0) {
     <h3>选择角色</h3>
     <button id="charClose" class="ui-block" title="关闭">✕</button>
   </div>
-  <div id="accBar"></div>
-  <div id="charGrid"></div>
+  <div id="charGrid">
+    <div id="accBar"></div>
+  </div>
 </div>
 
 <div id="bgPanel" class="hidden ui-block">

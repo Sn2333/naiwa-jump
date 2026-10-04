@@ -198,6 +198,10 @@ const settle = {
   overCoin: txt('overCoin'),
   overCoinPoint: txt('overCoinPoint'),         // ★ 加分明细行
   overCoinPointShown: show('overCoinPoint'),
+  /* ★ 加分行必须 innerHTML 渲染出 <img>（线上事故：textContent 把标签
+   *   原文当文字显示成"一串代码"）——img 存在 + 文本里没有 '<' 才算过 */
+  pointIco: document.querySelectorAll('#overCoinPoint .coinIco').length,
+  pointNoRaw: document.getElementById('overCoinPoint').textContent.indexOf('<') < 0,
   stored: localStorage.getItem('jump3d_coins'),
   tag: txt('coinTag'),                         // 同上：只剩数字
   tagIco: document.querySelectorAll('#coinTag .coinIco').length,
@@ -574,7 +578,7 @@ const fovNow = window.__CFG.fov;
  * ① 砖上真的立着 M/J 点阵字母（BoxGeometry 粒数：M 13 + J 9 = 22）
  * ② 落砖 → mjTimer 武装；离开脚下砖 → 计时作废
  * ③ 站满 1s → mjgrab 演出（drop→grab→rise→land 全由 tick 推进）
- * ④ 被放回后方第 3 块砖（不足取最近）+ next 重排 + 覆盖层收干净
+ * ④ 被放回后方第 3 块砖（不足取最近）+ 目标砖之后的旧链当场清干净 + 覆盖层收干净
  * ★ forceTrait 绕过 plain 模式（抽签链根本不进），?plain 的探针 URL 也能造出 MJ 砖。 */
 g.forceTrait = 'mj';
 g.backToTitle();
@@ -583,10 +587,23 @@ g.beginRun();
 await sleep(180);
 g.spawnNext();
 const mjP = g.platforms[g.platforms.length - 1];
-let mjCubeCount = 0;
-mjP.group.traverse((o) => {
-  if (o.isMesh && o.geometry && o.geometry.type === 'BoxGeometry') mjCubeCount++;
-});
+let mjCubeCount = 0, mjCylCount = 0, mjFlat = null;
+/* 砖上可能随机挂着一枚奶币（圆柱做的，且和砖身无关）—— 统计时跳过 coin 子树，
+ * noBody 才不会被奶币误伤 */
+for (const child of mjP.group.children) {
+  if (child === mjP.coin) continue;
+  child.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    if (o.geometry.type === 'BoxGeometry') mjCubeCount++;
+    else if (o.geometry.type === 'CylinderGeometry') mjCylCount++;
+  });
+}
+/* 字母组 = group 的 child 里唯一 rotation.x ≈ -π/2 的 Group（卧倒） */
+for (const o of mjP.group.children) {
+  if (o.isGroup && o.rotation.order === 'YXZ' && Math.abs(o.rotation.x + Math.PI / 2) < 0.01) {
+    mjFlat = { ry: +o.rotation.y.toFixed(3), lift: +o.position.y.toFixed(3) };
+  }
+}
 mjP.radius = 0.8; mjP.hitRadius = 0.8;
 g.next = mjP;
 g.charRoot.position.set(mjP.center.x, 0, mjP.center.z);
@@ -600,10 +617,12 @@ const mjArmed = {
   timer: g.mjTimer == null ? null : +g.mjTimer.toFixed(2),
   letters: mjCubeCount,
   idx: mjIdx,
+  noBody: mjCylCount === 0,        // ★ 没有圆柱砖身（用户指定：只要卧倒的字母）
+  flat: mjFlat,                    // ★ 字母平躺：order YXZ、rx≈-π/2、抬 cell/2 贴地
 };
-/* tick 推进 1.2s（> mjDwell 1.0s）→ 蜘蛛登场 */
+/* tick 推进 2s（> mjDwell 1.5s）→ 蜘蛛登场 */
 const mjTickOnce = () => { g._noRender = true; g.tick(0.05); g._noRender = false; };
-for (let i = 0; i < 24 && g.state !== 'mjgrab'; i++) mjTickOnce();
+for (let i = 0; i < 40 && g.state !== 'mjgrab'; i++) mjTickOnce();
 for (let i = 0; i < 4 && g.state === 'mjgrab'; i++) mjTickOnce();   // 再走几帧看 DOM
 const mjDrop = {
   state: g.state,
@@ -626,7 +645,15 @@ const mjDone = {
   charVisible: g.charRoot.visible,
   blobVisible: g.blob.visible,
   mjCleared: g.mj === null,
+  /* ★ 抓回 = 重新出发：目标砖之后的旧链当场清干净（数组只剩 current + 新 next），
+   *   原 MJ 砖（m.from）必须已被 dispose 掉 —— 线上事故：抓回后旧砖不消失、
+   *   新砖无限堆积（spawnNext 只加尾不清中段，旧链变永久孤儿） */
+  tailCut: !g.platforms.includes(mjP)
+    && g.platforms.length === Math.max(0, mjIdx - 3) + 2,
 };
+/* 继续跳（spawnNext×6）：数组长度有上界，旧砖不堆积 */
+for (let i = 0; i < 6; i++) g.spawnNext();
+const mjGrow = { len: g.platforms.length, mjGone: !g.platforms.includes(mjP) };
 /* 计时守卫：站在 MJ 砖上才倒数，离开脚下砖即作废 */
 g.current.trait = 'mj'; g.mjTimer = 0.4;
 mjTickOnce();
@@ -790,6 +817,7 @@ const accRowOn = document.querySelector('#accBar .accCell.on');
 const panelAcc = {
   rows: accRows.length,                              // 期望 3（头饰 + 背饰 + 特效）
   rowNames: accRows.map((r) => r.querySelector('h4').textContent).join(','),
+  insideGrid: !!document.querySelector('#charGrid > #accBar'),  // ★ 并进滚动区（不挡角色）
   cells: accCells.length,
   ownedWithPrice: ownedWithPrice.length,             // 期望 0：拥有的一律不标价
   lockedWithoutPrice: lockedWithoutPrice.length,     // 期望 0：未拥有的一律有价签
@@ -1206,6 +1234,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && settle.bonus === 5 && settle.score === 999 + 2 * settle.bonus
   && settle.overCoinPointShown === true
   && settle.overCoinPoint.indexOf('+10') >= 0 && settle.overCoinPoint.indexOf('2') >= 0
+  && settle.pointIco >= 1 && settle.pointNoRaw === true        // ★ img 真渲染、无 HTML 原文
   && settle.tag === String(settle.coins) && settle.tagIco === 1
   && loopGuard.injected >= 3 && loopGuard.advanced > 0.25
   && fragile.trait === 'fragile' && fragile.state === 'ready' && fragile.armed === true
@@ -1246,8 +1275,11 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   /* —— 2026-10-04：FOV 40 / MJ 砖与蜘蛛抓人 / 奶块 GIF —— */
   && fovNow === 40
   && mjArmed.trait === 'mj' && mjArmed.state === 'ready'
-  && mjArmed.timer !== null && mjArmed.timer > 0.8 && mjArmed.timer <= 1.0
+  && mjArmed.timer !== null && mjArmed.timer > 1.3 && mjArmed.timer <= 1.5   // mjDwell 1.5
   && mjArmed.letters >= 20                                     // M 13 + J 9 = 22 粒方块
+  && mjArmed.noBody === true                                   // 无圆柱砖身
+  && mjArmed.flat !== null && mjArmed.flat.ry === 0.785        // 平躺 + 对角朝向（π/4）
+  && mjArmed.flat.lift > 0.02 && mjArmed.flat.lift < 0.12      // 抬 cell/2 贴地
   && mjDrop.state === 'mjgrab' && mjDrop.phase === 'drop'
   && mjDrop.layerShown === true
   && typeof mjDrop.spiderTop === 'string' && mjDrop.spiderTop.indexOf('px') >= 0
@@ -1257,6 +1289,8 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && mjDone.nextIsMj === true                                  // next 重排到目标砖前一块
   && mjDone.charVisible === true && mjDone.blobVisible === true
   && mjDone.mjCleared === true
+  && mjDone.tailCut === true                                   // 抓回后旧链清干净
+  && mjGrow.len <= 8 && mjGrow.mjGone === true                 // 继续跳不堆积
   && mjCancel.keepOnBrick === true && mjCancel.leaveCancels === true
   && gif.laughHits === 1 && gif.hasGif === true && gif.isSprite === true
   && gif.ownTex === true                                       // ★ 独立纹理实例（防 UV 冲突）
@@ -1309,6 +1343,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && angry2UriLen > 5000                                     // ★ 奶怒2 贴图不能是空 base64
   /* 仓库：已拥有不标价 / 未拥有低亮 + 标价；三行分类都在 */
   && panelAcc.rows === 3 && panelAcc.rowNames === '头饰,背饰,特效'
+  && panelAcc.insideGrid === true
   && panelAcc.cells >= 5
   && panelAcc.ownedWithPrice === 0                             // ★ 拥有的一律不显示价格
   && panelAcc.lockedWithoutPrice === 0                         // ★ 未拥有的一律有价签
@@ -1402,7 +1437,7 @@ return {
   ice,
   holyGone,
   fov: fovNow,
-  mj: { armed: mjArmed, drop: mjDrop, pressBlocked: mjPressBlocked, done: mjDone, cancel: mjCancel },
+  mj: { armed: mjArmed, drop: mjDrop, pressBlocked: mjPressBlocked, done: mjDone, grow: mjGrow, cancel: mjCancel },
   gif, gifGone,
   charSize,
   milk: { off: milkLaughOff, on: milkLaughOn },

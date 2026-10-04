@@ -4,9 +4,34 @@
  * 正确姿势：停掉实时循环 → 手动逐帧推到目标时刻 → 真渲染一帧 → 截图。 */
 const g = window.__game;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const MODE = (window.__DBG_Q || location.search).indexOf('gif') >= 0 ? 'gif' : 'spider';
+const Q = (window.__DBG_Q || location.search);
+const MODE = Q.indexOf('gif') >= 0 ? 'gif' : (Q.indexOf('mjflat') >= 0 ? 'mjflat' : 'spider');
 
 await sleep(300);
+if (MODE === 'mjflat') {
+  /* MJ 砖卧倒字母：不触发蜘蛛，直接渲染"落在砖上"的那一帧 */
+  g.forceTrait = 'mj';
+  g.backToTitle();
+  await sleep(150);
+  g.beginRun();
+  await sleep(250);
+  g.spawnNext();
+  const p = g.next;
+  p.radius = 0.8; p.hitRadius = 0.8;
+  g.charRoot.position.set(p.center.x, 0, p.center.z);
+  g.state = 'jumping';
+  g.current.center.x += 6;
+  g.finishJump();
+  g.renderer.setAnimationLoop(null);
+  g._noRender = false;
+  g.tick(0.016);          // 只推 16ms：mjTimer 1.5s 远不到触发线，画面就是"字母卧地"
+  const letters = p.group.children.find((o) => o.isGroup && o.rotation.order === 'YXZ');
+  return {
+    ok: true, mode: MODE,
+    noBody: !p.group.children.some((o) => o.isMesh && o.geometry && o.geometry.type === 'CylinderGeometry'),
+    flat: letters ? { rx: +letters.rotation.x.toFixed(3), y: +letters.position.y.toFixed(3) } : null,
+  };
+}
 if (MODE === 'gif') {
   g.forceTrait = 'milk';
   g.backToTitle();

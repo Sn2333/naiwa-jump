@@ -83,6 +83,7 @@ function buildMjLetters(r) {
   const gap = cell * 0.7;                       // 两字母间留不到一格的缝
   draw(MJ_M, -(wM + gap + wJ) / 2);             // M 在左
   draw(MJ_J, -(wM + gap + wJ) / 2 + wM + gap);  // J 在右
+  grp.userData.cell = cell;   /* 调用方要用它贴地（卧倒时 position.y = cell/2） */
   return grp;
 }
 
@@ -116,19 +117,20 @@ const CFG = {
    * lure    磁铁砖  —— 下一跳自动吸向准星，闭眼也能落正中（完美连击）
    * milk    奶块    —— 砖面上印着经典奶蛙的脸，纯装饰，没有任何效果 */
   movingChance: 0.15,
-  springChance: 0.09,
+  springChance: 0.07,
   peachChance: 0.05,
   fragileChance: 0.075,
   doubleChance: 0.06,
   /* 负面效果砖（粘液削射程 / 冰冰冰冻住人）刻意比正面砖低一档：
-   * 现在 0.035，比正面的 0.05~0.06 都低 —— 玩家掉分主要该怪自己没踩准，
-   * 不是怪抽签抽到一块不让你好好玩的砖。 */
-  slimeChance: 0.035,
+   * 2026-10-04 第二轮下调（玩家反馈弹簧/粘液/蜘蛛出现太密）：
+   * 粘液 0.025、蜘蛛奶 0.025，弹簧也从 0.09 收到 0.07 —— 玩家掉分主要
+   * 该怪自己没踩准，不是怪抽签抽到一块不让你好好玩的砖。 */
+  slimeChance: 0.025,
   freezeChance: 0.035,
-  /* MJ 砖：砖上立着立体的 "M""J" 字母。站满 mjDwell 秒，蜘蛛奶会从屏幕上方
+  /* MJ 砖：砖上卧着立体的 "M""J" 字母。站满 mjDwell 秒，蜘蛛奶会从屏幕上方
    * 倒吊下来把人抓走、扔回后方第 mjBackSteps 块砖 —— 和粘液/冰冰冰同一档负面概率 */
-  mjChance: 0.035,
-  mjDwell: 1.0,        // 站满多少秒触发蜘蛛抓人（跳走就作废）
+  mjChance: 0.025,
+  mjDwell: 1.5,        // 站满多少秒触发蜘蛛抓人（跳走就作废；1.0 → 1.5 给足反应时间）
   mjBackSteps: 3,      // 抓回后方第几块砖（不足 3 块取最近）
   lureChance: 0.05,
   milkChance: 0.05,
@@ -1165,6 +1167,10 @@ class Platform {
       makeCyl(this.radius * 1.035, 0.10, -0.046, topMat, 44, rig);
       this.jelly = rig;
       this.jellyPhase = Math.random() * Math.PI * 2;
+    } else if (this.trait === 'mj') {
+      /* MJ 砖：**没有砖身**（用户指定）—— 就只是一对卧在地上的立体字母
+       * （见下面顶面图案段的 trait === 'mj' 分支）。落脚判定照旧是整圆
+       * （hitRadius = radius），地上那圈淡淡的高光环就是唯一的范围提示。 */
     } else {
       makeCyl(this.radius, h, -h / 2, sideMat, 48);
       makeCyl(this.radius * 1.005, 0.11, -0.049, topMat, 48);
@@ -1233,13 +1239,17 @@ class Platform {
       this.icon = icon;
       this.iconSpin = 0;
     } else if (this.trait === 'mj') {
-      /* MJ 砖：砖上立两个立体字母（见 buildMjLetters —— 小方块点阵拼的 M/J）。
-       * 立在**砖后缘**、正对镜头：角色是永远面向镜头的纸片人，字母也朝镜头
-       * 立在远离镜头的一侧，一前一后互不遮挡，读起来像砖后立了块招牌。 */
+      /* MJ 砖：没有砖身，两个立体字母**卧在地上**（用户指定，2026-10-04）。
+       * 点阵建在 XY 平面（字面朝 +Z）：先绕 Y 转 45° 对准相机对角线，再绕 X
+       * 转 -90° 放平 —— 字面朝上、字头指向远离镜头的 -Z（对玩家是正立文字），
+       * M→J 正好沿屏幕右方向。整组抬高 cell/2，让立方体的底面贴地。
+       * 沿对角挪到后缘：角色立在砖中央，字母从它身后露出来不被挡。 */
       const letters = buildMjLetters(this.radius);
       const back = -this.radius * 0.34;   // 沿"远离镜头"对角线（-x,-z）挪到后缘
-      letters.position.set(back, 0, back);
-      letters.rotation.y = Math.PI / 4;   // 点阵在 XY 平面朝 +Z；转 45° 正对相机对角线
+      letters.rotation.order = 'YXZ';
+      letters.rotation.y = Math.PI / 4;
+      letters.rotation.x = -Math.PI / 2;
+      letters.position.set(back, letters.userData.cell / 2, back);
       group.add(letters);
     } else if (this.trait === 'slime' || this.trait === 'lure') {
       /* 效果砖共用一套图案装配，只是换素材。
@@ -1275,6 +1285,7 @@ class Platform {
     }
 
     // 顶面高光圈（黄桃是圆滚滚的果顶，这个悬空的圈会浮在斜坡上方，跳过）
+    // MJ 砖没有砖身，这圈平贴地面的淡光环就是它唯一的落脚范围提示，必须留
     if (this.trait !== 'peach') {
       const ringMat = new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false,
@@ -1969,6 +1980,12 @@ class Game {
 
   buildCharGrid() {
     const grid = this.dom.charGrid;
+    /* ★ 装扮行并进了滚动区（是 #charGrid 的第一个格子）—— innerHTML='' 会把
+     *   它一起冲掉，之后 buildAccRows 全填在游离节点上，页面上装扮行凭空消失
+     *   （实测：accBar 从面板直属挪进 charGrid 后第一跑就踩了）。先摘下来，
+     *   角色格子铺完再放回最前面。 */
+    const accBar = this.dom.accBar;
+    if (accBar) accBar.remove();
     grid.innerHTML = '';
     const frag = document.createDocumentFragment();
     for (const c of charList()) {
@@ -2001,6 +2018,7 @@ class Game {
       frag.appendChild(cell);
     }
     grid.appendChild(frag);
+    if (accBar) grid.prepend(accBar);   // 装扮行放回滚动区顶部（见函数开头）
   }
 
   openCharPanel() {
@@ -3462,15 +3480,18 @@ class Game {
       this.placeSpider(m.fromX, lerp(m.fromY, -180, k * k));
       if (k >= 1) {
         /* 落点：后方第 mjBackSteps 块砖（不足取最近）。
-         * platforms 有序，current 往前数即可；next 重排到目标砖的前一块
-         * （原链还在，玩家回头跳还能把场子捡回来）。 */
+         * ★ 目标砖之后的整段旧链必须**当场砍掉**：抓回把 current 挪回链的中段，
+         *   而 spawnNext 只会往**尾部**加砖、只清**头部**（>8 块时 shift）——
+         *   旧链夹在中间永远轮不到清理，玩家每跳一步旧链就多积一块（线上实测：
+         *   抓回后继续跳，旧砖不消失、新砖无限堆积）。抓回 = 从这块砖重新出发，
+         *   前方原链作废，落地即铺一块全新的 next。 */
         const idx = this.platforms.indexOf(m.from);
         const ti = Math.max(0, idx - CFG.mjBackSteps);
         const target = this.platforms[ti] || m.from;
+        const cut = this.platforms.splice(ti + 1);
+        for (const p of cut) p.dispose(this);
         this.current = target;
-        const ni = this.platforms.indexOf(target) + 1;
-        if (this.platforms[ni]) this.next = this.platforms[ni];
-        else this.spawnNext();
+        this.spawnNext();
         /* 人从砖心上空掉下来（land 阶段做落体 + 落地）；镜头自己会摇回去 */
         this.charRoot.position.set(target.center.x, 2.6, target.center.z);
         this.settle(0);
@@ -3663,7 +3684,7 @@ class Game {
          * 把人抓走、扔回后方几块砖。计时在 tick 里走（ready/charging 才倒数），
          * 跳走即作废 —— 想不被抓就别恋战。 */
         this.mjTimer = CFG.mjDwell;
-        this.popText(`MJ 砖  站满 ${CFG.mjDwell.toFixed(0)} 秒会被抓走`, target.center, '#FF9AA8', 0.80, TIP);
+        this.popText(`MJ 砖  站满 ${CFG.mjDwell} 秒会被抓走`, target.center, '#FF9AA8', 0.80, TIP);
       } else if (target.trait === 'milk') {
         /* 奶块：砖面上印着经典奶蛙的脸，不给分也不给状态。
          * 但会**放一声大笑** —— 这是玩家自己提供的音源，"跳到奶块就笑"。
@@ -3808,9 +3829,11 @@ class Game {
     this.dom.best.textContent = this.best;
     this.dom.overScore.textContent = this.score;
     this.dom.overBest.textContent = this.best;
-    /* 分数明细：有奶币加分就补一行，让人知道多出来的分是捡币赚的。 */
+    /* 分数明细：有奶币加分就补一行，让人知道多出来的分是捡币赚的。
+     * ★ 必须 innerHTML —— 文案里嵌着 coinIco() 的 <img> 标签；用 textContent
+     *   会把标签原文当文字显示出来（线上实测：结算页冒出一串代码）。 */
     if (this.dom.overCoinPoint) {
-      this.dom.overCoinPoint.textContent = coinPoint > 0
+      this.dom.overCoinPoint.innerHTML = coinPoint > 0
         ? `${coinIco(16)} 捡到 ${this.runCoins} 枚 · 分数 +${coinPoint}` : '';
     }
     if (this.dom.overPeach) {
