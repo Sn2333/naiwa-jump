@@ -1169,9 +1169,30 @@ class Platform {
       this.jelly = rig;
       this.jellyPhase = Math.random() * Math.PI * 2;
     } else if (this.trait === 'mj') {
-      /* MJ 砖：**没有砖身**（用户指定）—— 就只是一对卧在地上的立体字母
-       * （见下面顶面图案段的 trait === 'mj' 分支）。落脚判定照旧是整圆
-       * （hitRadius = radius），地上那圈淡淡的高光环就是唯一的范围提示。 */
+      /* MJ 砖：没有实心砖身，但字母也不能飘在虚空里 —— 落脚面下立一圈
+       * **通透的细杆框架**托住它（用户要求"做框架支撑但看不见支撑"）：
+       * 杆细（半径 0.02）、色深、围在砖心圆周上，俯视几乎全被字母和落点圈
+       * 盖住，斜看才发现是"架子不是柱子" —— 浮空感没了，也不挡视线。
+       * 上下两道环箍把杆收成一个整体，读起来像一块"幽灵砖"的轮廓。 */
+      const legR = this.radius * 0.78;
+      const frameMat = new THREE.MeshStandardMaterial({
+        color: 0x39456B, roughness: 0.5, metalness: 0.35,
+      });
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const leg = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.02, 0.02, this.height - 0.12, 6), frameMat);
+        leg.position.set(Math.cos(a) * legR, -this.height / 2, Math.sin(a) * legR);
+        leg.castShadow = true;
+        group.add(leg);
+      }
+      for (const ry of [-0.05, -this.height + 0.05]) {
+        const hoop = new THREE.Mesh(
+          new THREE.TorusGeometry(legR, 0.018, 6, 40), frameMat);
+        hoop.rotation.x = Math.PI / 2;
+        hoop.position.y = ry;
+        group.add(hoop);
+      }
     } else {
       makeCyl(this.radius, h, -h / 2, sideMat, 48);
       makeCyl(this.radius * 1.005, 0.11, -0.049, topMat, 48);

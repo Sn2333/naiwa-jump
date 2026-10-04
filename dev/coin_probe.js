@@ -588,14 +588,21 @@ await sleep(180);
 g.spawnNext();
 const mjP = g.platforms[g.platforms.length - 1];
 let mjCubeCount = 0, mjCylCount = 0, mjFlat = null;
-/* 砖上可能随机挂着一枚奶币（圆柱做的，且和砖身无关）—— 统计时跳过 coin 子树，
- * noBody 才不会被奶币误伤 */
+let frameLegs = 0, frameHoops = 0;
+/* 砖上可能随机挂着一枚奶币（圆柱做的，且和砖身无关）—— 统计时跳过 coin 子树。
+ * 框架腿也是圆柱（半径 0.02 细杆），"无砖身"只指半径 > r/2 的实心大圆柱 */
 for (const child of mjP.group.children) {
   if (child === mjP.coin) continue;
   child.traverse((o) => {
     if (!o.isMesh || !o.geometry) return;
     if (o.geometry.type === 'BoxGeometry') mjCubeCount++;
-    else if (o.geometry.type === 'CylinderGeometry') mjCylCount++;
+    else if (o.geometry.type === 'CylinderGeometry') {
+      const pr = (o.geometry.parameters || {}).radiusTop || 0;
+      if (pr > mjP.radius / 2) mjCylCount++;        // 实心砖身圆柱
+      else frameLegs++;                             // 框架细杆
+    } else if (o.geometry.type === 'TorusGeometry') {
+      if ((o.geometry.parameters || {}).tube < 0.05) frameHoops++;  // 环箍
+    }
   });
 }
 /* 字母组 = group 的 child 里唯一 rotation.x ≈ -π/2 的 Group（卧倒） */
@@ -617,8 +624,9 @@ const mjArmed = {
   timer: g.mjTimer == null ? null : +g.mjTimer.toFixed(2),
   letters: mjCubeCount,
   idx: mjIdx,
-  noBody: mjCylCount === 0,        // ★ 没有圆柱砖身（用户指定：只要卧倒的字母）
+  noBody: mjCylCount === 0,        // ★ 无实心砖身（细框架不算——用户要"看不见支撑"）
   flat: mjFlat,                    // ★ 字母平躺：order YXZ、rx≈-π/2、抬 cell/2 贴地
+  frame: { legs: frameLegs, hoops: frameHoops },   // ★ 6 细杆 + 2 环箍托住落脚面
 };
 /* tick 推进 2s（> mjDwell 1.5s）→ 蜘蛛登场 */
 const mjTickOnce = () => { g._noRender = true; g.tick(0.05); g._noRender = false; };
@@ -1277,7 +1285,8 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && mjArmed.trait === 'mj' && mjArmed.state === 'ready'
   && mjArmed.timer !== null && mjArmed.timer > 1.3 && mjArmed.timer <= 1.5   // mjDwell 1.5
   && mjArmed.letters >= 20                                     // M 13 + J 9 = 22 粒方块
-  && mjArmed.noBody === true                                   // 无圆柱砖身
+  && mjArmed.noBody === true                                   // 无实心砖身
+  && mjArmed.frame.legs === 6 && mjArmed.frame.hoops === 2     // 框架支撑就位
   && mjArmed.flat !== null && mjArmed.flat.ry === 0.785        // 平躺 + 对角朝向（π/4）
   && mjArmed.flat.lift > 0.02 && mjArmed.flat.lift < 0.12      // 抬 cell/2 贴地
   && mjDrop.state === 'mjgrab' && mjDrop.phase === 'drop'
@@ -1331,7 +1340,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && wingEq.headStillOn === true                               // ★ 换背饰不顶掉头饰
   && wingEq.behind === true && wingEq.underHead === true       // 垫在角色后面
   && wingEq.belowHead === true                                 // ★ 挂在上背，不是飘在头顶
-  && Math.abs(wingEq.relHeight - 1.05) < 0.05                           // ≈ hK（内容框 h=0.58，本体高按内容算）
+  && Math.abs(wingEq.relHeight - 0.90) < 0.05                           // ≈ hK（上线实测 1.05 嫌大，收到 0.90）
   && wingEq.relWidth > 1.2 && wingEq.relWidth < 1.8                     // ★ 宽度受控：够大能露出来、又别横摊
   && wingEq.stored === 'wing'
   /* ★ 新抠的免费角色：都在、名字对得上、免费（不 locked / 不带价签） */

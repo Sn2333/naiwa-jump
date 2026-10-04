@@ -26,9 +26,20 @@ if (MODE === 'mjflat') {
   g._noRender = false;
   g.tick(0.016);          // 只推 16ms：mjTimer 1.5s 远不到触发线，画面就是"字母卧地"
   const letters = p.group.children.find((o) => o.isGroup && o.rotation.order === 'YXZ');
+  /* "无实心砖身"按圆柱半径判定：框架腿是 0.02 细杆，不算砖身 */
+  let bigCyl = false;
+  p.group.traverse((o) => {
+    if (o.isMesh && o.geometry && o.geometry.type === 'CylinderGeometry'
+      && (o.geometry.parameters || {}).radiusTop > p.radius / 2) bigCyl = true;
+  });
   return {
     ok: true, mode: MODE,
-    noBody: !p.group.children.some((o) => o.isMesh && o.geometry && o.geometry.type === 'CylinderGeometry'),
+    noBody: !bigCyl,
+    frame: {
+      legs: p.group.children.filter((o) => o.isMesh && o.geometry
+        && o.geometry.type === 'CylinderGeometry'
+        && (o.geometry.parameters || {}).radiusTop < 0.05).length,
+    },
     flat: letters ? { rx: +letters.rotation.x.toFixed(3), y: +letters.position.y.toFixed(3) } : null,
   };
 }
