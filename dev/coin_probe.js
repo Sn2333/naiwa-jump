@@ -1340,7 +1340,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && wingEq.headStillOn === true                               // ★ 换背饰不顶掉头饰
   && wingEq.behind === true && wingEq.underHead === true       // 垫在角色后面
   && wingEq.belowHead === true                                 // ★ 挂在上背，不是飘在头顶
-  && Math.abs(wingEq.relHeight - 0.90) < 0.05                           // ≈ hK（上线实测 1.05 嫌大，收到 0.90）
+  && Math.abs(wingEq.relHeight - 0.82) < 0.05                           // ≈ hK（两轮缩小：1.05→0.90→0.82）
   && wingEq.relWidth > 1.2 && wingEq.relWidth < 1.8                     // ★ 宽度受控：够大能露出来、又别横摊
   && wingEq.stored === 'wing'
   /* ★ 新抠的免费角色：都在、名字对得上、免费（不 locked / 不带价签） */
