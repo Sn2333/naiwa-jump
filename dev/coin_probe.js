@@ -13,7 +13,7 @@
  *       不包 try/catch 的话这里会永久定格 —— 就是"标题界面卡住"）
  *   5) 脆砖 fragile：落上 arm 倒计时 → 到期碎裂下沉 → 站在上面的人一起掉
  *   6) ×2 砖 double：落正中心的收益必须正好是普通砖的两倍
- *   7) 五种效果砖（弹簧 / 粘液 / 冰冰冰 / 磁铁 / 圣光）+ 冰冰冰的三冰块模型与物理材质
+ *   7) 四种效果砖（弹簧 / 粘液 / 冰冰冰 / 磁铁）+ 冰冰冰的三冰块模型与物理材质
  *      + 奶块：顶面蛙脸、跳上去放一声大笑（受「奶块大笑」开关控制）
  *   8) 装饰（公告赠品不可买 → 装备 → 通用 → 卸下）+ 角色买卖 + 雪碧图动图推帧
  *   9) 设置：开关 / 滑条写档，音量经总线生效，面板互斥
@@ -240,11 +240,11 @@ const dbl = { trait: dp.trait, state: g.state, gained: g.score - dblScore0 };
 
 /* ---------- 7) 特殊效果砖：真的改变了玩法数值 ---------- */
 /* 7a) 弹簧 spring：助推**只作用从弹簧起跳的那一跳**，落地就清。
- *   三件事一起验：① 助推把射程倍率抬到 1+0.92；② 那一跳真的更远；
+ *   三件事一起验：① 助推把射程倍率抬到 1+boostRange；② 那一跳真的更远；
  *   ③ 落到普通砖后自动归零、落在弹簧上则保持 —— 这就是"离开弹簧就结束"。 */
 const boostIdle = g.rangeMul();               // 没有助推 = 1
 g.setBoost(true);
-const boostAfter = g.rangeMul();              // 有助推 = 1.92
+const boostAfter = g.rangeMul();              // 有助推 = 1 + boostRange（现为 1.25）
 const buffTagShown = document.getElementById('buffTag').classList.contains('show');
 const buffTagText = document.getElementById('buffTag').textContent;
 g.setBoost(false);
@@ -294,10 +294,12 @@ g.state = 'jumping';
 g.finishJump();
 const boostOnSpring = g.boostLv;              // 必须是 1（站在弹簧上）
 g.setBoost(false);
-/* 7a3) 弹簧的下一块**不能太近**：站弹簧上最轻一跳也飞 minReach×1.92 远，
- *   生成器必须把间距下限抬到轻跳也飞不过头的位置，否则满射程必跳过 —— 物理无解 */
+/* 7a3) 弹簧的下一块**不能太近**：站弹簧上最轻一跳也飞 minReach×(1+boostRange) 远，
+ *   生成器要把间距下限抬到轻跳也飞不过头的位置，否则满射程必跳过 —— 物理无解。
+ *   注意 boostRange 现在只有 0.25，弹簧下限（≈1.28）已低于全局最小间距 gapMin，
+ *   所以这个用例真正的兜底是 gapMin —— 断言取两者的较大值。 */
 const springGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
-const springGapLo = CFG.jumpMin * (1 + CFG.boostRange) * 1.08;
+const springGapLo = Math.max(CFG.gapMin, CFG.jumpMin * (1 + CFG.boostRange) * 1.08);
 const springGapOk = springGap >= springGapLo - 1e-6;
 g.fixedGap = savedGap7a;
 
@@ -326,7 +328,7 @@ g.charRoot.position.set(sl1.center.x, 0, sl1.center.z);
 g.state = 'jumping';
 g.finishJump();
 const slimeOnBrick = g.slimeLv;               // 必须是 1（站在粘液上）
-/* 7b3) 站粘液上生成的新一块**不能太远**：射程被砍到 ×0.6，
+/* 7b3) 站粘液上生成的新一块**不能太远**：射程被砍到 ×0.5625（两层），
  *   生成器必须把间距上限压进"满蓄力也够得着"的范围，否则必然跳不过去 —— 物理无解 */
 const slimeGap = Math.hypot(g.next.center.x - g.current.center.x, g.next.center.z - g.current.center.z);
 const slimeGapHi = (CFG.jumpMin + CFG.jumpRange) * g.rangeMul() * 0.90;
@@ -420,42 +422,7 @@ const lureFarDist = lureErr();
 g.state = 'ready';
 g.current.trait = null;
 
-/* 7e) 圣光砖 holy：把场上脆砖全部净化回普通砖 */
-g.forceTrait = 'fragile';
-g.backToTitle();
-await sleep(150);
-g.beginRun();
-await sleep(200);
-/* 场上铺几块脆砖（forceTrait 会把 spawnNext 的每一块都抽成脆砖） */
-for (let i = 0; i < 3; i++) g.spawnNext();
-/* 挑一块脆砖当"圣光砖"：先把它转成 holy，再从脆砖计数里剔除 —— 它不是要被净化的对象 */
-const holyTarget = g.platforms[g.platforms.length - 1];
-holyTarget.trait = 'holy';
-holyTarget.radius = 0.8;
-holyTarget.hitRadius = 0.8;
-holyTarget.color && holyTarget.color.set(0xF3EDD6);
-/* 脆砖数只数"真正该被净化的"：排除 holyTarget 与脚下这块（这两块按设计会跳过） */
-const isCleanable = (p) => p.trait === 'fragile' && p !== holyTarget && p !== g.current;
-/* 先记下"净化前就该在场上的这批砖" —— finishJump 成功后 spawnNext() 会新摆一块，
- * 新砖不该被回溯净化，所以只统计这一批 */
-const holyWatch = g.platforms.filter(isCleanable);
-const fragCount = holyWatch.length;
-const fragSkipped = g.platforms.filter((p) => p === g.current && p.trait === 'fragile').length;
-g.next = holyTarget;
-g.charRoot.position.set(holyTarget.center.x, 0, holyTarget.center.z);
-g.state = 'jumping';
-/* 把脚下这块挪远：否则 finishJump 第一分支会判成"原地跳"，圣光根本不触发 */
-g.current.center.x += 6;
-g.finishJump();
-const fragAfterHoly = holyWatch.filter((p) => p.trait === 'fragile').length;
-const holy = {
-  fragBefore: fragCount, fragAfter: fragAfterHoly,
-  skipped: fragSkipped, spawnedFragile: g.platforms.filter((p) => p.trait === 'fragile').length - fragAfterHoly,
-  state: g.state, targetTrait: holyTarget.trait,
-};
-g.forceTrait = null;
-
-/* 7f) 冰冰冰（原「冻结砖」）的**模型与材质** —— 改名不算改完，视觉换没换才是重点。
+/* 7e) 冰冰冰（原「冻结砖」）的**模型与材质** —— 改名不算改完，视觉换没换才是重点。
  *   ★ 必须走 forceTrait + beginRun 让 Platform 真正按 freeze 建一遍；
  *     直接给一块已建好的砖 `.trait = 'freeze'` 只改标签、模型材质一概不变。 */
 g.forceTrait = 'freeze';
@@ -541,6 +508,34 @@ const milkLaughOn = {
   laughPlayed: window.__sound.laugh() === true,
 };
 g.forceTrait = null;
+
+/* 7g) 圣光砖整体删除（2026-10-04）：配置项没了，抽签池里也不该再出现。
+ *   跑一批 spawnNext 实测 —— 池子里要是还留着 holy，120 次几乎必然撞到（原概率 0.035）。
+ *   ★ 不重置局内状态：这段夹在别的用例中间，backToTitle/beginRun 会污染后面的用例。 */
+let holySeen = 0;
+const traitPool = new Set();
+const savedPlainMode = g.plainMode;
+g.plainMode = false;                          // 关掉 plain 才抽得到特色砖（否则池子恒为 plain，断言是假阳性）
+for (let i = 0; i < 120; i++) {
+  g.spawnNext();
+  const t = g.next.trait || 'plain';
+  if (t === 'holy') holySeen++;
+  traitPool.add(t);
+}
+g.plainMode = savedPlainMode;
+const holyGone = {
+  cfg: !('holyChance' in CFG),
+  seen: holySeen,
+  pool: [...traitPool].sort().join(','),
+};
+
+/* 7h) 角色体积缩小：所有角色按 character.js 的 CFG.height 统一高度，现在封顶 1.48
+ *   （原 1.62）。过宽角色会等比缩小，所以 h ≤ 1.48、w ≤ h 都要成立。 */
+const charSize = {
+  h: +g.character.height.toFixed(3),
+  w: +g.character.width.toFixed(3),
+  footR: +g.character.footR.toFixed(3),
+};
 
 /* ---------- 8) 装饰 / 角色：赠品不可买 → 装备 → 3D 生效 → 换角色 → 卸下 ---------- */
 /* 8a) 生日帽已经是**公告赠品**：商店买不到（buyAcc 直接拒），而且第 1 节已经从
@@ -815,9 +810,9 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && fragileCleaned.inList === false
   && dbl.trait === 'double' && dbl.state === 'ready' && dbl.gained === 6
   /* —— 特殊效果砖 —— */
-  && Math.abs(boostIdle - 1) < 1e-6 && Math.abs(boostAfter - 1.92) < 1e-6 // 1 + 0.92
+  && Math.abs(boostIdle - 1) < 1e-6 && Math.abs(boostAfter - (1 + CFG.boostRange)) < 1e-6 // 1 + 0.25
   && buffTagShown === true && buffTagText.indexOf('弹簧') >= 0
-  && distBoosted > distNoBoost * 1.5                           // 那一跳真的更远
+  && distBoosted > distNoBoost * 1.2                           // 那一跳真的更远（射程 ×1.25）
   && boostAfterLand === 0 && landState === 'ready'             // ★ 离开弹簧 → 助推结束
   && boostOnSpring === 1                                       // 站在弹簧上 → 还有助推
   && springGapOk === true                                      // ★ 弹簧的下一块不能太近（轻跳也飞不过头）
@@ -836,7 +831,8 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && lureDist < lureTol                                        // 磁铁把落点拽进完美范围
   && lureDist < lureNoTrait * 0.35                             // 而且明显比"没磁铁"更接近砖心
   && lureFarDist > lureTol * 2                                 // 蓄力差一大截时，磁铁也救不了
-  && holy.fragBefore >= 3 && holy.fragAfter === 0              // 圣光净化场上全部脆砖
+  && holyGone.cfg === true && holyGone.seen === 0              // 圣光砖整体删除（配置项 + 抽签池）
+  && charSize.h <= 1.481 && charSize.h >= 1.0 && charSize.w <= charSize.h + 1e-6 // 角色体积缩小
   /* —— 冰冰冰：三块真冰块 + 顶面不再有图案 —— */
   && ice.count === 3 && ice.shared === true
   && Math.abs(ice.topY - ice.tExp) < 0.02                      // 顶块落在 -t
@@ -920,8 +916,9 @@ return {
     power: +lurePower.toFixed(2),
     gap: +lureGap.toFixed(3), reach: +lureReach.toFixed(3), cap: +lureCap.toFixed(3),
   },
-  holy,
   ice,
+  holyGone,
+  charSize,
   milk: { off: milkLaughOff, on: milkLaughOn },
   acc: { noticeBuy, equipped, panelAcc, afterSwap, unequipped },
   char: { poor: charPoor, bought: charBought, anim, thumb },

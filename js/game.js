@@ -24,8 +24,8 @@ const CFG = {
   camOffset: new THREE.Vector3(5.4, 7.4, 5.4),
   camLookY: 0.35,
   fov: 34,
-  gapMin: 1.90,
-  gapMax: 3.60,
+  gapMin: 2.15,
+  gapMax: 3.80,
   jumpMin: 0.95,
   jumpRange: 3.85,
   chargeTime: 1.15,
@@ -44,10 +44,9 @@ const CFG = {
   /* 特色砖出现率（迷你砖由上面的曲线单独控制）
    * fragile 脆砖   —— 站上去倒计时，到点碎裂，逼玩家别恋战
    * double  ×2 砖  —— 落上这一跳的收益全部翻倍
-   * spring  弹簧    —— 站上它，下一跳射程 +92%（**只有这一跳**，离开就没了），弧线也更高
-   * slime   粘液块  —— 踩过之后射程被压住（每层 -30%，最多 2 层），越踩越跳不远
+   * spring  弹簧    —— 站上它，下一跳射程 +25%（**只有这一跳**，离开就没了），弧线也更高
+   * slime   粘液块  —— 踩过之后射程被压住（每层 -25%，最多 2 层），越踩越跳不远
    * freeze  冰冰冰  —— 落上直接把角色冻住 1.5 秒，人动不了、蓄不了力（三块真冰块）
-   * holy    圣光砖  —— 把场上已有的脆砖全部"净化"回普通砖（可救命的清场）
    * lure    磁铁砖  —— 下一跳自动吸向准星，闭眼也能落正中（完美连击）
    * milk    奶块    —— 砖面上印着经典奶蛙的脸，纯装饰，没有任何效果 */
   movingChance: 0.15,
@@ -60,7 +59,6 @@ const CFG = {
    * 不是怪抽签抽到一块不让你好好玩的砖。 */
   slimeChance: 0.035,
   freezeChance: 0.035,
-  holyChance: 0.035,
   lureChance: 0.05,
   milkChance: 0.05,
 
@@ -68,8 +66,8 @@ const CFG = {
   crackTime: 1.4,
 
   /* —— 特殊效果砖的参数 —— */
-  boostRange: 0.92,     // 弹簧助推：从弹簧起跳的那一跳射程 ×1.92。**不叠层、不跨砖**
-  slimeK: 0.25,         // 粘液块：每层把能跳的最大距离砍掉两成半（0.40→0.30→0.25，一路按玩家反馈放软）
+  boostRange: 0.25,     // 弹簧助推：从弹簧起跳的那一跳射程 ×1.25。**不叠层、不跨砖**
+  slimeK: 0.25,         // 粘液块：每层把能跳的最大距离砍掉四分之一（与弹簧的 +25% 对称）
   slimeMax: 2,          // 粘液最多叠几层（再砍就跳不动了，得留活路）
   freezeMs: 1500,       // 冰冰冰：把角色冻住多少毫秒（期间不能蓄力起跳）
   /* 磁铁砖：只管"对准"，不管"够远"。蓄力差一点点它把你拽回砖心；
@@ -116,7 +114,7 @@ const PALETTE = [
 ];
 
 /* 落在不同砖上的收益：普通 1、迷你砖风险补偿、脆砖"赶紧跑"奖励、特殊图案、彩蛋 */
-const POINTS = { base: 1, mini: 2, fragile: 2, spring: 3, special: 5, peach: 10, holy: 5 };
+const POINTS = { base: 1, mini: 2, fragile: 2, spring: 3, special: 5, peach: 10 };
 
 /* 会给玩家上"状态"的砖（起跳时读取，落上时生效）。
  * 效果都**只属于脚下方块**：spring 的助推只活一跳（落地自动清），
@@ -388,26 +386,6 @@ function iconTexture(kind) {
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalCompositeOperation = 'source-over';
-  } else if (kind === 'holy') {
-    /* 圣光砖：同心光环 + 光芒，配合砖身的柔光就是"神圣"。
-     * ★ 用暖金 —— 砖身是象牙白的，白图案糊在上面根本看不出（实测踩过）。 */
-    ctx.strokeStyle = 'rgba(206,158,52,0.94)';
-    ctx.fillStyle = 'rgba(206,158,52,0.94)';
-    for (const [r, w] of [[78, 11], [50, 9], [24, 12]]) {
-      ctx.lineWidth = w;
-      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.lineCap = 'round';
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI / 4 + Math.PI / 8;
-      ctx.lineWidth = 11;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * 92, Math.sin(a) * 92);
-      ctx.lineTo(Math.cos(a) * 108, Math.sin(a) * 108);
-      ctx.stroke();
-    }
-    // 中央一点实心（让光环中心不空）
-    ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI * 2); ctx.fill();
   } else if (kind === 'lure') {
     /* 磁铁砖：双极磁铁 + 左侧吸入的短线 */
     ctx.lineWidth = 18;
@@ -1169,9 +1147,9 @@ class Platform {
       group.add(icon);
       this.icon = icon;
       this.iconSpin = 0;
-    } else if (this.trait === 'slime' || this.trait === 'holy' || this.trait === 'lure') {
+    } else if (this.trait === 'slime' || this.trait === 'lure') {
       /* 效果砖共用一套图案装配，只是换素材。
-       * 磁铁不转（有方向含义），圣光慢慢转，粘液不转（滴落是有上下之分的） */
+       * 磁铁不转（有方向含义），粘液不转（滴落是有上下之分的） */
       const iconMat = new THREE.MeshBasicMaterial({
         map: iconTexture(this.trait), transparent: true, depthWrite: false, opacity: 0.95,
       });
@@ -1181,22 +1159,7 @@ class Platform {
       icon.renderOrder = 2;
       group.add(icon);
       this.icon = icon;
-      this.iconSpin = (this.trait === 'holy') ? 0.35 : 0;
-      if (this.trait === 'holy') {
-        /* 圣光砖外加一圈柔和金环（写法和黄桃一样，只是色更白） */
-        const halo = new THREE.Mesh(
-          new THREE.RingGeometry(this.hitRadius * 0.90, this.hitRadius * 1.0, 64),
-          new THREE.MeshBasicMaterial({
-            color: 0xFFF6D0, transparent: true, opacity: 0.22,
-            side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-          })
-        );
-        halo.rotation.x = -Math.PI / 2;
-        halo.position.y = 0.0035;
-        halo.renderOrder = 1;
-        group.add(halo);
-        this.halo = halo;
-      }
+      this.iconSpin = 0;
     } else if (this.trait === 'peach') {
       /* 顶面不用再贴图标了 —— 整块砖已经是一颗切开的黄桃 */
       /* 彩蛋砖的专属光环。
@@ -1273,22 +1236,6 @@ class Platform {
   armCrack() {
     if (this.trait !== 'fragile' || this.crackT != null) return;
     this.crackT = CFG.crackTime;
-  }
-
-  /** 圣光净化：脆砖变回普通砖。
-   *  倒计时归零、裂纹图标撤掉、颜色回暖 —— 玩家看到的就是"这块砖被救回来了"。 */
-  purify() {
-    if (this.trait !== 'fragile') return false;
-    this.trait = null;
-    this.crackT = null;
-    this.sinking = false;
-    if (this.icon) {
-      this.group.remove(this.icon);
-      this.icon.geometry.dispose();
-      this.icon.material.dispose();
-      this.icon = null;
-    }
-    return true;
   }
 
   /** 碎裂：整个人/砖的处理交给 game.onCrack，砖本体在这里开始下沉消失 */
@@ -2963,8 +2910,8 @@ class Game {
     const gapMax = CFG.gapMax + prog * CFG.gapMaxRamp;
     /* ★ 效果砖改变了"从脚下这块起跳"的可达区间，下一块的间距必须跟着收放，
      * 不然会摆出**物理上无解**的局：
-     *   · 站在粘液上射程被砍（最多 ×0.5625），下一块照常摆 3.6 远就必然跳不过去；
-     *   · 站在弹簧上最轻一跳也飞 0.95×1.92 ≈ 1.8 远，下一块摆近了必然直接跳过头。
+     *   · 站在粘液上射程被砍（最多 ×0.5625），下一块照常摆 3.8 远就必然跳不过去；
+     *   · 站在弹簧上最轻一跳也飞 0.95×1.25 ≈ 1.19 远，下一块摆近了必然直接跳过头。
      * 这里的 rangeMul() 是玩家**此刻**站在 current 上的真实倍率 —— spawnNext
      * 发生在落地状态更新之后，所以连排粘液/弹簧会逐块自动收紧，不用额外记链。
      * （?gap= 固定调试间距时不干预，探针用例要的是确定的布局。）
@@ -2999,8 +2946,6 @@ class Game {
         trait = 'slime';
       } else if (Math.random() < CFG.freezeChance) {
         trait = 'freeze';
-      } else if (Math.random() < CFG.holyChance) {
-        trait = 'holy';
       } else if (Math.random() < CFG.lureChance) {
         trait = 'lure';
       } else if (Math.random() < CFG.milkChance) {
@@ -3027,7 +2972,7 @@ class Game {
     if (trait === 'spring' || trait === 'peach') {
       kind = 'round';                       // 这两种砖的外观自带造型，用圆底
     } else if (trait === 'fragile' || trait === 'double'
-      || trait === 'slime' || trait === 'freeze' || trait === 'holy' || trait === 'lure') {
+      || trait === 'slime' || trait === 'freeze' || trait === 'lure') {
       kind = 'round';                       // 效果砖统一用圆底 + 顶面图案表达
     } else if (this.forceKind) {
       kind = this.forceKind;
@@ -3074,7 +3019,6 @@ class Game {
         : trait === 'double' ? 0xE8B84B       // ×2 砖：金灿灿
         : trait === 'slime' ? 0x63CE72        // 粘液块：黏液绿
         : trait === 'freeze' ? 0x8FCBEF       // 冰冰冰：冰蓝（材质另配半透明，见 Platform）
-        : trait === 'holy' ? 0xF3EDD6         // 圣光砖：象牙白（顶面另配更亮的米色）
         : trait === 'lure' ? 0xB47CE6         // 磁铁砖：紫（和"特殊图案"的紫区分开：更饱和）
         : trait === 'milk' ? 0xF2E3C4         // 奶块：奶油色砖身，顶面留白给蛙脸
         : PALETTE[(Math.random() * PALETTE.length) | 0],
@@ -3232,7 +3176,7 @@ class Game {
   /** 弹簧助推：只有"有 / 没有"两种，**不叠层**。
    *  它描述的是"下一跳能不能蹬一下"，天然是个一次性状态 ——
    *  原来是 0~3 层常驻叠乘，踩一连串弹簧就能越跳越远、再也掉不下去，
-   *  那不叫跳一跳了。现在：站上弹簧 → 下一跳 ×1.92 → 落地清掉。
+   *  那不叫跳一跳了。现在：站上弹簧 → 下一跳 ×1.25 → 落地清掉。
    *  （传布尔或数字都行，内部统一成 0 / 1。） */
   setBoost(on) {
     this.boostLv = on ? 1 : 0;
@@ -3398,26 +3342,6 @@ class Game {
         /* 磁铁砖：效果在下一次起跳（落点被拽向砖心），这里只报喜 */
         this.popText('磁铁砖  下一跳自动对准', target.center, '#D8B6FF', 0.80, TIP);
         this.perfectBurst(target.center, 0xB47CE6);
-      } else if (target.trait === 'holy') {
-        /* 圣光砖：净化场上所有脆砖。清掉的每一块都算一次小奖励，
-         * 因为它可能正好救了玩家一命（下一块就是脆砖的那种局面）。 */
-        gain += POINTS.holy;
-        let cleared = 0;
-        for (const p of this.platforms) {
-          /* 跳过刚落上的这块（它本身就是圣光砖）和脚下这块 ——
-           * 脚下的砖要是脆的，净化掉就等于"圣光把你自己站的地板变没了"。 */
-          if (p === target || p === this.current) continue;
-          if (p.purify()) {
-            cleared++;
-            this.ripple(p.center, 0xFFF3C4, 1.1);
-            this.burst(new THREE.Vector3(p.center.x, 0.3, p.center.z), 0xFFF6D0, 8, 1.4, 0.05, 2.2);
-          }
-        }
-        this.popText(cleared > 0 ? `圣光  净化脆砖 ×${cleared}` : '圣光  场上没有脆砖',
-          target.center, '#FFF3C4', 0.80, TIP);
-        this.perfectBurst(target.center, 0xFFF6D0);
-        sound.peach();
-        this.camPunch();
       } else if (target.mini) {
         gain += POINTS.mini;
         this.popText(`迷你砖  +${POINTS.mini}`, target.center, '#BFE3FF', 0.80, TIP);
