@@ -42,7 +42,9 @@ class FakeD1 {
   }
 }
 
-const env = { DB: new FakeD1() };
+/* BOARD_MAINTENANCE = '0'：线上是维护关停状态（worker 里 MAINTENANCE = true），
+ * 这里打开业务逻辑，让下面整套 SQL/接口回归照常跑。总闸本身另有专门一组用例。 */
+const env = { DB: new FakeD1(), BOARD_MAINTENANCE: '0' };
 
 /* 预置一个「v1 时代已迁移过列、但号还是四位」的表：
  *  - 老玩家甲/乙：还没号（pid NULL，等补号）
@@ -93,6 +95,36 @@ async function call(method, path, opts) {
   let data = null;
   try { data = await res.clone().json(); } catch (e) { /* 204 没有 body */ }
   return { res, data };
+}
+
+/* ------------------------------------------------------------------ */
+/* 榜单维护总闸（默认关停）：三个业务接口 503，health 照常            */
+/* ------------------------------------------------------------------ */
+
+console.log('### 榜单维护总闸 ###');
+{
+  /* ★ 必须共享主 env 的 DB 实例：worker 里的 schemaReady 是模块级缓存，
+   *   先在另一个 FakeD1 上跑过 health（→ensureSchema）的话，主 env 的建表/迁移
+   *   会被缓存短路，后面整组 pid 迁移用例全炸。 */
+  const menv = { DB: env.DB };   // 不给 BOARD_MAINTENANCE → 走代码默认（关停）
+  const callM = async (method, path, opts) => {
+    const res = await worker.fetch(req(method, path, opts), menv);
+    let data = null;
+    try { data = await res.clone().json(); } catch (e) { /* 无 body */ }
+    return { res, data };
+  };
+  const s = await callM('POST', '/api/submit', { body: { nick: '奶蛙', score: 10 } });
+  check('维护中 submit → 503 + maintenance 标记',
+    s.res.status === 503 && s.data && s.data.maintenance === true, s.data);
+  const r = await callM('GET', '/api/rank?limit=5');
+  check('维护中 rank → 503（榜单对外不可见）',
+    r.res.status === 503 && r.data && r.data.maintenance === true, r.data);
+  const w = await callM('GET', '/api/who?nick=奶蛙');
+  check('维护中 who → 503（不能借道造 0 分行）',
+    w.res.status === 503 && w.data && w.data.maintenance === true, w.data);
+  const h = await callM('GET', '/api/health', { origin: '' });
+  check('维护中 health 仍然放行（部署自检要用）',
+    h.res.status === 200 && h.data && h.data.ok === true, h.data);
 }
 
 /* ------------------------------------------------------------------ */
@@ -254,7 +286,9 @@ console.log('\n### 输入校验 ###');
  * "Cannot read properties of undefined" 让人去猜。 */
 console.log('\n### 没绑 D1 时的报错要能看懂 ###');
 {
-  const bare = {};   // 没有 env.DB，模拟「Worker 部署了但 Bindings 里没加 D1」
+  /* 没有 env.DB，模拟「Worker 部署了但 Bindings 里没加 D1」。
+   * BOARD_MAINTENANCE:'0' 先把维护总闸打开，这一组要测的才是「没绑库」的报错路径。 */
+  const bare = { BOARD_MAINTENANCE: '0' };
 
   const r1 = await worker.fetch(req('GET', '/api/health', { origin: '' }), bare);
   const d1 = await r1.json();

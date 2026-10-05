@@ -1,59 +1,71 @@
-/* 排行榜 HTTP 链路的端到端回归
+/* 榜单/昵称维护模式的端到端回归（2026-10-05 关停）
  *
- * 走的是玩家真实路径：填昵称 → 本机最高分补交 → 打开榜单 → 看见自己的名次。
- * 不直接调用 api.js 的内部函数，因为要验证的正是"界面上的按钮真的把分传上去、
- * 榜单真的把名次显示出来"这一整条链路。
+ * 原来这份文件走的是「填昵称 → 上报 → 拉榜」的真实链路；榜单关停后，
+ * 它改成验证关停本身的三件事：
+ *   1. 榜单按钮点了不打开面板，弹「正在维护中」；
+ *   2. 保存/清除昵称被拦，本机昵称数据不被改；
+ *   3. api 层（submitScore/leaderboard/fetchPid）零网络请求 ——
+ *      页面挂着 ?api= 指向可达的 mock 后端，恰恰用来证明「够得着也不发」。
+ * 后端的 503 总闸在 dev/test_worker.mjs 里测（node:sqlite 离线跑真 SQL 文件）。
  *
- * 前置：页面必须以 ?api=<地址> 指向一个可用后端（dev/check.sh 里起的是
- * dev/mock_worker.mjs）。
+ * 前置：页面以 ?api=<地址> 指向 dev/mock_worker.mjs（check.sh 已起）。
  */
 const g = window.__game;
 if (!g) return { ok: false, err: 'no game' };
 
+const M = window.__apiMaint;
 const api = window.__api;
 await new Promise((r) => setTimeout(r, 1200));
 
-const out = { mode: api.mode, base: api.base };
+const out = { mode: api.mode, base: api.base, flag: M && M.MAINTENANCE };
 
-if (api.mode !== 'http' || !api.base) {
+if (!M || M.MAINTENANCE !== true) {
   out.ok = false;
-  out.err = '没有走 HTTP 后端，?api= 没生效';
+  out.err = 'api.js 的 MAINTENANCE 总闸没有打开';
   return out;
 }
 
-const post = (nick, score) => fetch(api.base + '/api/submit', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ nick, score }),
-}).then((r) => r.json());
+/* 计数 fetch：任何走网络的调用都会被抓到 */
+let calls = 0;
+const realFetch = window.fetch;
+window.fetch = (...a) => { calls++; return realFetch(...a); };
 
-// 先造两个对手，这样既能验证排序，也能验证"我不是第一名"时的名次计算
-out.seedA = await post('对手甲', 100);
-out.seedB = await post('对手乙', 50);
+/* ① 榜单按钮：面板不开、弹维护提示 */
+g.dom.rankBtn.click();
+await new Promise((r) => setTimeout(r, 80));
+const panel = document.getElementById('rankPanel');
+out.rankBlocked = panel.classList.contains('hidden');
+const toastEl = document.getElementById('shopToast');
+out.rankToast = toastEl.classList.contains('show')
+  && toastEl.textContent.indexOf('维护中') >= 0;
+toastEl.classList.remove('show');
 
-// 真实链路：本机最高分 321，填昵称时自动补交
-localStorage.setItem('jump3d_best', '321');
-g.best = 321;
+/* ② 保存昵称：不改 profile，只弹提示；清除昵称同样被拦 */
+localStorage.setItem('jump3d_nick', '');
 g.dom.nickInput.value = '测试蛙';
 g.saveNick();
-await new Promise((r) => setTimeout(r, 1000));
+await new Promise((r) => setTimeout(r, 80));
+out.nickBlocked = !localStorage.getItem('jump3d_nick')
+  && toastEl.textContent.indexOf('维护中') >= 0;
+toastEl.classList.remove('show');
 
-await g.openRankPanel();
-await new Promise((r) => setTimeout(r, 600));
+/* ③ api 层零网络：拉榜 / 补编号 / 提交成绩全走本地分支 */
+const P = window.__profile || {};
+P.nick = '测试蛙'; P.pid = null;
+const lb = await M.leaderboard(50);
+const pid = await M.fetchPid();
+const sub = await M.submitScore(321);
+window.fetch = realFetch;
 
-const rows = [...document.querySelectorAll('#rankList .rankRow')];
-out.rows = rows.map((el) => el.textContent.replace(/\s+/g, ' ').trim());
-out.me = (document.querySelector('#rankMe').textContent || '').replace(/\s+/g, ' ').trim();
-out.marked = rows.filter((el) => el.classList.contains('me')).length;
+out.lbLocal = !!(lb && lb.local === true);
+out.pidNoNet = pid === null || typeof pid === 'number';
+out.subLocal = !!(sub && sub.local === true);
+out.netCalls = calls;                       // ★ 核心断言：必须是 0
 
-// 断言：走 HTTP / 三条记录 / 我 321 分排第一 / 对手按分数降序 / 我那一行被标出来
-out.ok = out.mode === 'http'
-  && out.rows.length === 3
-  && out.rows[0].includes('测试蛙') && out.rows[0].includes('321')
-  && out.rows[1].includes('对手甲')
-  && out.rows[2].includes('对手乙')
-  && out.rows[0].includes('#1')
-  && out.marked === 1
-  && out.me.includes('#1');
+out.ok = out.flag === true
+  && out.rankBlocked === true && out.rankToast === true
+  && out.nickBlocked === true
+  && out.lbLocal === true && out.pidNoNet === true && out.subLocal === true
+  && out.netCalls === 0;
 
 return out;

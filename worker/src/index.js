@@ -41,6 +41,13 @@ const NICK_RE = /^[0-9A-Za-z_\u4e00-\u9fa5\u3040-\u30ff-]+$/;
 const MAX_SCORE = 1000000;
 const MAX_LIMIT = 200;
 
+/* ★ 榜单维护总闸（2026-10-05 关停，用户指令）
+ * true = /api/submit、/api/rank、/api/who 全部对所有人返回 503「正在维护中」，
+ * 不读写数据库 —— 榜上数据原样留在 D1 里，只有带着本机 wrangler 凭据的
+ * REST 查询（dev/_tmp 里的 d1_board_clean.mjs select）能看，公开互联网上看不到任何一条。
+ * 恢复上线：把这行改成 false 再 push（或在 Pages 后台设环境变量 BOARD_MAINTENANCE=0 临时打开）。 */
+const MAINTENANCE = true;
+
 /* 允许调用的来源。服务端按来源域名放行，所以前端的 publishableKey 之类的
  * 东西完全不需要 —— 这里没有密钥，也没有会话。
  *
@@ -333,6 +340,18 @@ export default {
     try {
       if (url.pathname === '/api/health') {
         return await handleHealth(env, cors);
+      }
+
+      /* 维护总闸：三个业务接口全关，health 留着给部署自检用。
+       * 测试本地业务逻辑时给 env.BOARD_MAINTENANCE = '0'（见 dev/test_worker.mjs）。 */
+      const maintOverride = env ? env.BOARD_MAINTENANCE : undefined;
+      const maintenance = maintOverride != null ? maintOverride !== '0' : MAINTENANCE;
+      if (maintenance) {
+        return json({
+          ok: false,
+          maintenance: true,
+          msg: '排行榜正在维护中，暂时无法查看或提交成绩',
+        }, 503, cors);
       }
 
       /* 建表只放在真要读写的两个接口前 —— 健康检查要能在「没绑库」时也答得出来，

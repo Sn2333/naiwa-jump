@@ -133,17 +133,16 @@ echo "### worker 后端回归（含 SQL） ###"
 "$NODE" --no-warnings dev/test_worker.mjs || rc=1
 echo
 
-# 排行榜 HTTP 链路实测：昵称 → 上报 → 拉榜 → 看见自己的名次。
-# 后端是 dev/mock_worker.mjs（内存版，接口与真 Worker 一致），
-# 页面用 ?api= 指过去 —— 这样不需要任何云端账号就能全自动跑。
-echo "### 排行榜 HTTP 链路实测 ###"
+# 排行榜维护模式链路实测（2026-10-05 关停）：按钮拦截 → 零网络请求 → api 全走本地。
+# ?api= 仍指到 dev/mock_worker.mjs —— 恰好用来证明「就算有后端可达，页面也不会发请求」。
+echo "### 排行榜维护模式链路实测 ###"
 RANK_OUT=$(PROBE_RUN="$(cat dev/rank_probe.js)" \
   "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?api=http://127.0.0.1:$MOCK_PORT" \
   "$SHOT_DIR/_check_rank.png" 4000 2>&1)
 if echo "$RANK_OUT" | grep -q '"ok":true'; then
-  echo "  ✓ 昵称→上报→榜单全链路（排序与我的名次都正确）"
+  echo "  ✓ 维护模式：榜单/昵称按钮被拦 + 零网络请求（netCalls=0）"
 else
-  echo "  ✗ 排行榜链路失败："
+  echo "  ✗ 维护模式链路失败："
   echo "$RANK_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$RANK_OUT" | tail -20
   rc=1
 fi
@@ -161,7 +160,7 @@ fi
 VD_OUT=$("$NODE" dev/verify_deploy.mjs "http://127.0.0.1:$PORT/_vd_tmp.html" --write 2>&1)
 rm -f _vd_tmp.html
 if echo "$VD_OUT" | grep -q "全部通过"; then
-  echo "  ✓ 站点 / 后端地址 / Worker / D1 绑定 / CORS / 预检 / 读榜 / 写榜 全通"
+  echo "  ✓ 站点 / 后端地址 / Worker / D1 绑定 / CORS / 预检 全通；读榜/写榜 = 维护关停(503)"
 else
   echo "  ✗ 部署自检脚本失败："
   echo "$VD_OUT" | tail -20

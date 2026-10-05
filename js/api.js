@@ -23,6 +23,14 @@ const LS_BEST = 'jump3d_best';
 const LS_PID = 'jump3d_pid';               // 服务端发的固定编号（#1001 起），跟昵称配套
 const LS_SCORES = 'jump3d_local_scores';   // 本地模式：{ 昵称: best }
 
+/* ★ 榜单/昵称维护总闸（2026-10-05 关停，用户指令）
+ * true = 关停：榜单按钮、保存/清除昵称点了只弹「正在维护中」；
+ * submitScore / leaderboard / fetchPid 一律走本地分支 ——
+ * **一个请求都不会发往 Cloudflare**，配合后端总闸（worker 里 MAINTENANCE = true）
+ * 实现「榜单仅自己可见」：前端不发、后端不答，D1 里只有本机凭据能查。
+ * 恢复上线：这里和 worker/src/index.js 里的 MAINTENANCE 一起改回 false。 */
+export const MAINTENANCE = true;
+
 const NICK_MIN = 2;
 const NICK_MAX = 12;
 
@@ -218,7 +226,8 @@ export function loadProfile() {
 export async function fetchPid() {
   if (typeof window !== 'undefined') window.__profile = profile;   // 探针/调试入口
   const nick = profile.nick;
-  if (!nick || !HTTP_MODE) return profile.pid || null;
+  /* 维护关停：不问服务端，保留本机缓存的旧编号（界面显示不受影响） */
+  if (!nick || !HTTP_MODE || MAINTENANCE) return profile.pid || null;
   try {
     const r = await httpJSON('GET', '/api/who?nick=' + encodeURIComponent(nick));
     if (r && r.pid != null) storePid(r.pid);
@@ -284,7 +293,7 @@ export async function submitScore(score) {
   if (!nick) return null;
   const s = Math.max(0, Math.floor(score));
 
-  if (!api.online) {
+  if (!api.online || MAINTENANCE) {
     const all = readJSON(LS_SCORES, {});
     all[nick] = Math.max(all[nick] || 0, s);
     writeJSON(LS_SCORES, all);
@@ -307,7 +316,9 @@ export async function leaderboard(limit = 100) {
   const nick = profile.nick;
   const n = Math.max(1, Math.min(500, limit | 0));
 
-  if (!api.online) {
+  /* 维护关停：走本地榜单分支（面板本来就打不开，这里是兜底 —— 保证就算
+   * 别处误调 leaderboard() 也不会有请求飞出去） */
+  if (!api.online || MAINTENANCE) {
     const all = readJSON(LS_SCORES, {});
     /* 本地模式下把本机最佳成绩也算进来。但没填昵称、本机也没成绩时不能凭空
      * 造一个「我 0 分」的条目 —— 榜单上挂一行 0 分毫无意义，还显得像 bug。 */
@@ -337,4 +348,9 @@ export async function leaderboard(limit = 100) {
     me: !!nick && e.nick === nick,
   }));
   return { list, me: (r && r.me) || null, local: false };
+}
+
+/* 探针/调试入口：无头回归要断言「关停状态下零网络请求 + 按钮被拦」 */
+if (typeof window !== 'undefined') {
+  window.__apiMaint = { MAINTENANCE, submitScore, leaderboard, fetchPid };
 }

@@ -1151,42 +1151,66 @@ const settings = {
   panelOpen: setPanelOpen, setClosed,
 };
 
-/* ---------- 10) 玩家固定编号（#10000001 起）的显示 ----------
- * 服务端按昵称发号（who/submit/rank 都带 pid），前端在 userTag 与榜单行
- * 昵称后面各缀一个半透明 .pid。这里伪造响应直接驱动渲染，不依赖网络。 */
-const pidTag = (async () => {
+/* ---------- 10) 榜单/昵称维护模式（2026-10-05 关停） ----------
+ * 关停期间：榜单按钮点了只弹「正在维护中」（面板不打开）；保存/清除昵称同样被拦；
+ * leaderboard / fetchPid / submitScore 全走本地分支 —— 用计数 fetch 断言
+ * **一个请求都不会发出去**（这就是「仅自己可见」的前端半边，后端半边在 test_worker 里）。
+ * userTag 的 pid 徽标渲染是纯 DOM 逻辑，照常可测（恢复上线后要接着用）。 */
+const maintOut = (async () => {
+  const M = window.__apiMaint;
+  let calls = 0;
+  const realFetch = window.fetch;
+  window.fetch = (...a) => { calls++; return realFetch(...a); };
+
+  /* userTag 徽标：纯 DOM，喂个 profile 就该显示 */
   const P = window.__profile || {};
-  P.nick = '测试蛙';
-  P.pid = 10000001;
+  P.nick = '测试蛙'; P.pid = 10000001;
   g.refreshNickUI();
   const tag = document.getElementById('userTag');
   const tagPid = tag ? tag.querySelector('.pid') : null;
-  /* 榜单行：拦 fetch，喂一条带 pid 的假榜单，再跑一遍真实的渲染代码 */
-  const realFetch = window.fetch;
-  window.fetch = (u, o) => String(u).indexOf('/api/rank') >= 0
-    ? Promise.resolve(new Response(JSON.stringify({
-      ok: true,
-      list: [{ rank: 1, nick: '测试蛙', best: 9, pid: 10000001 }],
-      me: { rank: 1, best: 9, pid: 10000001 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }))
-    : realFetch(u, o);
-  let rows = null;
-  try { await g.refreshRank(); } catch (e) { /* 渲染内部已兜错 */ }
-  window.fetch = realFetch;
-  const row0 = document.querySelector('#rankList .rankRow');
-  const rowPid = row0 ? row0.querySelector('.pid') : null;
-  const nk = row0 ? row0.querySelector('.nk') : null;
-  rows = {
-    tagText: tagPid ? tagPid.textContent : '',
-    rowPid: rowPid ? rowPid.textContent : '',
-    order: row0 ? (nk.nextSibling === rowPid) : false,   // 编号紧跟昵称后面
-    dim: rowPid ? getComputedStyle(rowPid).opacity : null,
-  };
-  P.nick = ''; P.pid = null;                              // 还原，别污染后面的用例
+  const tagText = tagPid ? tagPid.textContent : '';
+  P.nick = ''; P.pid = null;
   g.refreshNickUI();
-  return rows;
+
+  /* 榜单按钮：面板不打开，弹维护提示 */
+  g.dom.rankBtn.click();
+  await new Promise((r) => setTimeout(r, 60));
+  const panel = document.getElementById('rankPanel');
+  const rankBlocked = panel.classList.contains('hidden');
+  const toastEl = document.getElementById('shopToast');
+  const rankToast = toastEl.classList.contains('show')
+    && toastEl.textContent.indexOf('维护中') >= 0;
+  toastEl.classList.remove('show');
+
+  /* 保存昵称：profile 不被改，只弹提示（探针作用域没有 profile 模块变量，走 __profile） */
+  g.dom.nickInput.value = '测试蛙';
+  g.saveNick();
+  await new Promise((r) => setTimeout(r, 60));
+  const nickBlocked = !(window.__profile && window.__profile.nick)
+    && toastEl.textContent.indexOf('维护中') >= 0;
+  g.dom.nickInput.value = '';
+  toastEl.classList.remove('show');
+
+  /* api 层零网络：拉榜 / 补编号 / 提交成绩全都本地消化
+   * （submitScore/leaderboard 读的是模块内 profile —— 就是 __profile 这同一份对象，
+   *   上面 userTag 用例结束时把它清空了，这里要重新给上昵称） */
+  P.nick = '测试蛙'; P.pid = null;
+  const lb = await M.leaderboard(50);
+  const pid = await M.fetchPid();
+  const sub = await M.submitScore(123);
+  window.fetch = realFetch;
+  P.nick = ''; P.pid = null;
+
+  return {
+    flag: M.MAINTENANCE === true,
+    tagText, rankBlocked, rankToast, nickBlocked,
+    lbLocal: lb && lb.local === true,
+    pidNoNet: pid === null || typeof pid === 'number',
+    subLocal: sub && sub.local === true,
+    netCalls: calls,                        // ★ 必须是 0
+  };
 })();
-const pidTagOut = await pidTag;
+const maint = await maintOut;
 
 /* 落正中心 = perfect：base 1 + 连击 1 的 2 分 = 3，×2 之后必须是 6 */
 const ok = dotOn === true && notice.panel === true && notice.dot === false
@@ -1222,10 +1246,13 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && shop.accBuy10 === 2                                            // 两件都还没买 → 各一个价格按钮
   && shop.charBuy === 1 && shop.price50 === true
   && shopClosed.panel === false && shopClosed.hasPanel === false
-  /* 玩家编号：userTag 与榜单行的昵称后面都要缀半透明 #10000001 */
-  && pidTagOut.tagText === '#10000001'
-  && pidTagOut.rowPid === '#10000001' && pidTagOut.order === true
-  && pidTagOut.dim !== null && Number(pidTagOut.dim) < 0.9
+  /* 维护模式：榜单/昵称关停，零网络请求，userTag 徽标渲染照常 */
+  && maint.flag === true
+  && maint.tagText === '#10000001'
+  && maint.rankBlocked === true && maint.rankToast === true
+  && maint.nickBlocked === true
+  && maint.lbLocal === true && maint.subLocal === true && maint.pidNoNet === true
+  && maint.netCalls === 0                                            // ★ 一个请求都不许飞出去
   /* —— 奶币：砖上实体 / 拾取 / 累计 / 结算 —— */
   && coinsStart === 7
   && coinOnBrick === true && coinAttached === true && coinFaceIsMesh === true
@@ -1460,5 +1487,5 @@ return {
   char: { poor: charPoor, bought: charBought, anim, thumb,
           newChars: newChars, charTotal, frogFirst, angry2UriLen },
   settings,
-  pidTag: pidTagOut,
+  maint: maint,
 };

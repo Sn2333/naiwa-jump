@@ -23,6 +23,9 @@ const NICK_RE = /^[0-9A-Za-z_\u4e00-\u9fa5\u3040-\u30ff-]+$/;
 const MAX_SCORE = 1000000;
 const MAX_LIMIT = 200;
 
+/* ★ 维护总闸：与真 Worker 的 MAINTENANCE 保持同一状态（2026-10-05 关停） */
+const MAINTENANCE = true;
+
 /** nick -> { best, updated_at, pid } */
 const board = new Map();
 
@@ -114,6 +117,16 @@ const server = http.createServer(async (req, res) => {
      * 内存版不存在「没绑库」，所以固定 db:true；多带的 n 是本地的榜容量，
      * 方便调试时一眼看到有没有数据。 */
     return json(res, 200, { ok: true, db: true, ts: Date.now(), n: board.size }, origin);
+  }
+
+  /* ★ 维护总闸：与真 Worker（worker/src/index.js）的关停行为逐字段对齐 ——
+   * submit/rank/who 全部 503 + maintenance 标记，health 照常。 */
+  if (MAINTENANCE) {
+    return json(res, 503, {
+      ok: false,
+      maintenance: true,
+      msg: '排行榜正在维护中，暂时无法查看或提交成绩',
+    }, origin);
   }
 
   if (url.pathname === '/api/submit') {

@@ -6,7 +6,7 @@ import * as THREE from './vendor/three.module.js';
 import { Character3D, charList, charDef } from './character.js';
 import { DEFAULT_CHAR } from './sprite_data.js';
 import { bgList, bgDef, DEFAULT_BG } from './theme.js';
-import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard, fetchPid } from './api.js';
+import { api, profile, loadProfile, setNick, clearNick, submitScore, leaderboard, fetchPid, MAINTENANCE } from './api.js';
 import { sound, CLIP_VOL } from './audio.js';
 import { edgeOver, perfectTol } from './hit.js';
 import { accList, accDef, accCat, ACC_CATS, shopAccList } from './acc.js';
@@ -2132,7 +2132,11 @@ class Game {
     d.accountPanel.addEventListener('click', (e) => {
       if (e.target === d.accountPanel) this.closeAccountPanel();
     });
-    d.rankBtn.addEventListener('click', () => this.openRankPanel());
+    d.rankBtn.addEventListener('click', () => {
+      /* 维护关停（2026-10-05）：按钮留着，点了只提示。 */
+      if (MAINTENANCE) { this.shopToast('排行榜正在维护中'); return; }
+      this.openRankPanel();
+    });
     d.rankClose.addEventListener('click', () => this.closeRankPanel());
     d.rankPanel.addEventListener('click', (e) => {
       if (e.target === d.rankPanel) this.closeRankPanel();
@@ -2142,6 +2146,8 @@ class Game {
     /* 回车直接保存，省得手机上还要去点按钮 */
     d.nickInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.saveNick(); });
     d.nickClear.addEventListener('click', () => {
+      /* 维护关停（2026-10-05）：昵称系统一并冻结，只提示不动数据。 */
+      if (MAINTENANCE) { this.shopToast('昵称系统正在维护中'); return; }
       clearNick();
       this.acctMsg('已清除昵称，成绩改成只存本机');
       this.refreshNickUI();
@@ -2191,6 +2197,8 @@ class Game {
   /** 保存昵称。纯本机操作，不走网络；存完顺手把本机最高成绩补交一次，
    *  免得玩家刚填完昵称、榜单上却还没有自己的分数。 */
   saveNick() {
+    /* 维护关停（2026-10-05）：昵称系统冻结 —— 不保存、不补交，只提示。 */
+    if (MAINTENANCE) { this.shopToast('昵称系统正在维护中'); return; }
     try {
       const n = setNick(this.dom.nickInput.value);
       this.acctMsg(`昵称已保存：${n}`, 'ok');

@@ -36,6 +36,10 @@ if (!siteUrl) {
 const stripSlash = (u) => String(u).replace(/\/+$/, '');
 const TIMEOUT = 15000;
 
+/* ★ 榜单维护关停（2026-10-05）：/api/rank、/api/submit 预期返回 503 + maintenance 标记。
+ * 关停期间这就算是「链路正常」；恢复上线后把这行改回 false。 */
+const MAINTENANCE = true;
+
 const results = [];
 const ok = (name, detail = '') => results.push({ pass: true, name, detail });
 const bad = (name, detail = '') => results.push({ pass: false, name, detail });
@@ -205,7 +209,15 @@ if (workerAlive) {
   try {
     const res = await tryFetch(`${apiBase}/api/rank?limit=5`);
     const data = await res.json().catch(() => null);
-    if (res.status === 200 && data && Array.isArray(data.list)) {
+    if (MAINTENANCE) {
+      if (res.status === 503 && data && data.maintenance === true) {
+        ok('读排行榜（关停态）', 'HTTP 503 + maintenance 标记 —— 榜单对外不可见，符合预期');
+      } else {
+        bad('读排行榜（关停态）',
+          `预期 503 + maintenance:true，实际 HTTP ${res.status}: ${JSON.stringify(data).slice(0, 150)}` +
+          ' —— worker/src/index.js 里的 MAINTENANCE 总闸没生效？');
+      }
+    } else if (res.status === 200 && data && Array.isArray(data.list)) {
       ok(
         '读排行榜',
         `HTTP 200，返回 ${data.list.length} 条` +
@@ -224,6 +236,9 @@ if (workerAlive) {
 /* ------------------------------------------------------------------ */
 
 if (WRITE && workerAlive) {
+  if (MAINTENANCE) {
+    ok('写入排行榜（关停态）', '榜单维护中，跳过真实写入 —— 想测写链路先恢复 MAINTENANCE');
+  } else {
   const nick = `自检-${Date.now().toString(36).slice(-4)}`;
   try {
     const res = await tryFetch(`${apiBase}/api/submit`, {
@@ -244,6 +259,7 @@ if (WRITE && workerAlive) {
     }
   } catch (e) {
     bad('写入排行榜', e.name === 'AbortError' ? '请求超时' : e.message);
+  }
   }
 }
 
