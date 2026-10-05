@@ -712,8 +712,8 @@ for (let i = 0; i < 100 && g.fx.some((f) => f.kind === 'gif'); i++) mjTickOnce()
 const gifGone = { left: g.fx.filter((f) => f.kind === 'gif').length };
 g.forceTrait = null;
 
-/* 7h) 角色体积缩小：所有角色按 character.js 的 CFG.height 统一高度，现在封顶 1.48
- *   （原 1.62）。过宽角色会等比缩小，所以 h ≤ 1.48、w ≤ h 都要成立。 */
+/* 7h) 角色体积缩小：所有角色按 character.js 的 CFG.height 统一高度，现在封顶 1.30
+ *   （1.62 → 1.48 → 1.30，两轮"还是太大"）。过宽角色等比缩小，所以 h ≤ 1.30、w ≤ h。 */
 const charSize = {
   h: +g.character.height.toFixed(3),
   w: +g.character.width.toFixed(3),
@@ -1336,7 +1336,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && gif.opacity === 1 && gif.aboveChar === true
   && gif.life > 4 && gif.max > 4                               // 和 4s 笑声差不多长
   && gifGone.left === 0                                        // 播完自清
-  && charSize.h <= 1.481 && charSize.h >= 1.0 && charSize.w <= charSize.h + 1e-6 // 角色体积缩小
+  && charSize.h <= 1.301 && charSize.h >= 1.0 && charSize.w <= charSize.h + 1e-6 // 角色体积缩小
   /* —— 冰冰冰：三块真冰块 + 顶面不再有图案 —— */
   && ice.count === 3 && ice.shared === true
   && Math.abs(ice.topY - ice.tExp) < 0.02                      // 顶块落在 -t

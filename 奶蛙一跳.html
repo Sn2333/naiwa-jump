@@ -54221,7 +54221,7 @@ const ACC_DECOS = [
      *   （3.7 倍体宽），整组读成"横着摊开的冰环"而不是背上的翅膀（用户反馈
      *   "根本就不在角色的背部"）。收到 0.68 后位置对了，但**宽体型的角色（大奶 /
      *   奶霸）身体会把冰晶挡住**（用户反馈）—— 抬到 1.05 露出来了，但用户上线
-     *   实测连续两轮嫌大 —— 收到 **0.82**：内容 ≈ 2.0 宽 × 1.2 高（角色高 1.48），
+     *   实测连续三轮嫌大 —— 收到 **0.82**：内容 ≈ 1.75 宽 × 1.07 高（角色高 1.30），
      *   宽体型还能露边、不再横摊。
      * dy 正 = 往上：压到 **-0.02**，内容中心基本落在背饰锚点上（头顶下方 0.42 角色高），
      *   四片冰晶从肩后展开、不飘过头顶。
@@ -54297,7 +54297,7 @@ function charList() { return ALL_CHARS; }
 function charDef(key) { return BY_KEY.get(key) || BY_KEY.get(DEFAULT_CHAR) || ALL_CHARS[0]; }
 
 const CFG = {
-  height: 1.48,        // 角色在世界里的高度（单位与方块一致；1.62 → 1.48，玩家反馈体积偏大）
+  height: 1.30,        // 角色在世界里的高度（单位与方块一致；1.62 → 1.48 → 1.30，玩家两轮反馈体积偏大）
   lift: 0.015,         // 略微抬离地面，避免与方块顶面共面闪烁
   outline: 0.035,      // 贴纸描边：在角色后面垫一层放大的深色剪影
   outlineColor: 0x2A1B08,
@@ -59210,11 +59210,11 @@ class Game {
     tex.magFilter = THREE.LinearFilter;
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
     const sp = new THREE.Sprite(mat);
-    const hgt = 1.05;
+    const hgt = 0.95;   // 1.05 → 0.95：角色缩到 1.30 后等比收，免得相对显大
     sp.scale.set(hgt * (def.w && def.h ? def.w / def.h : 1), hgt, 1);
-    /* y=2.3：角色高 1.48，GIF 底沿(2.3-0.53≈1.78)在头顶之上留出明显间隙，
+    /* y=2.05：角色高 1.30，GIF 底沿(2.05-0.475≈1.58)在头顶之上留出明显间隙，
      * 不然动图像"骑在头上"；也没高到出画面（40° 视野下砖在下半屏） */
-    sp.position.set(center.x, 2.3, center.z);
+    sp.position.set(center.x, 2.05, center.z);
     sp.renderOrder = 9;
     this.scene.add(sp);
     this.fx.push({

@@ -36,7 +36,7 @@ export function charList() { return ALL_CHARS; }
 export function charDef(key) { return BY_KEY.get(key) || BY_KEY.get(DEFAULT_CHAR) || ALL_CHARS[0]; }
 
 const CFG = {
-  height: 1.48,        // 角色在世界里的高度（单位与方块一致；1.62 → 1.48，玩家反馈体积偏大）
+  height: 1.30,        // 角色在世界里的高度（单位与方块一致；1.62 → 1.48 → 1.30，玩家两轮反馈体积偏大）
   lift: 0.015,         // 略微抬离地面，避免与方块顶面共面闪烁
   outline: 0.035,      // 贴纸描边：在角色后面垫一层放大的深色剪影
   outlineColor: 0x2A1B08,

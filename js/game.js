@@ -3576,11 +3576,11 @@ class Game {
     tex.magFilter = THREE.LinearFilter;
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
     const sp = new THREE.Sprite(mat);
-    const hgt = 1.05;
+    const hgt = 0.95;   // 1.05 → 0.95：角色缩到 1.30 后等比收，免得相对显大
     sp.scale.set(hgt * (def.w && def.h ? def.w / def.h : 1), hgt, 1);
-    /* y=2.3：角色高 1.48，GIF 底沿(2.3-0.53≈1.78)在头顶之上留出明显间隙，
+    /* y=2.05：角色高 1.30，GIF 底沿(2.05-0.475≈1.58)在头顶之上留出明显间隙，
      * 不然动图像"骑在头上"；也没高到出画面（40° 视野下砖在下半屏） */
-    sp.position.set(center.x, 2.3, center.z);
+    sp.position.set(center.x, 2.05, center.z);
     sp.renderOrder = 9;
     this.scene.add(sp);
     this.fx.push({
