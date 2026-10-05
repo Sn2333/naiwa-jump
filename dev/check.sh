@@ -140,7 +140,7 @@ RANK_OUT=$(PROBE_RUN="$(cat dev/rank_probe.js)" \
   "$NODE" dev/probe.mjs "http://127.0.0.1:$PORT/index.html?api=http://127.0.0.1:$MOCK_PORT" \
   "$SHOT_DIR/_check_rank.png" 4000 2>&1)
 if echo "$RANK_OUT" | grep -q '"ok":true'; then
-  echo "  ✓ 维护模式：榜单/昵称按钮被拦 + 零网络请求（netCalls=0）"
+  echo "  ✓ 维护模式：榜单面板打开显示维护中 + 零网络请求（netCalls=0）"
 else
   echo "  ✗ 维护模式链路失败："
   echo "$RANK_OUT" | grep -A3 "PROBE_RUN 结果" || echo "$RANK_OUT" | tail -20

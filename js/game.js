@@ -227,7 +227,7 @@ const PEACH_COLOR = 0xDE9A22;     // 黄桃块：琥珀金的砖身（顶面另�
  *   once  同一个公告只发一次（靠把公告版本号记进 jump3d_gift_<id> 来判重）
  * 领过一次之后按钮变成"已领取"，重启也还是已领取 —— 判重的键是**公告版本号**，
  * 所以以后发新公告、附件换新，玩家又能领一次新东西。 */
-const NOTICE_VERSION = '6';
+const NOTICE_VERSION = '7';
 /* 新的排前面。**赠礼判重键绑定在公告条目上（date|附件id）**，与 NOTICE_VERSION 无关 ——
  * 不然每发一条新公告，旧公告里的生日帽就能再领一次。 */
 const NOTICE_ITEMS = [
@@ -236,6 +236,12 @@ const NOTICE_ITEMS = [
     title: '紧急通知',
     pinned: true,   /* 置顶：渲染时永远排第一 + 挂「置顶」标（见 openNoticePanel） */
     body: '由于游戏数据（昵称、奶币、分数记录）存储在浏览器缓存中，更新后重进可能会丢失数据，目前正在考虑解决方案。建议使用浏览器游玩。另外，下次更新时间不定。特此通知，请各位玩家理解。',
+  },
+  {
+    date: '2026-10-05',
+    title: '排行榜维护说明',
+    pinned: true,   /* 第二个置顶：紧跟紧急通知 */
+    body: '目前正在完善账号和分数上传机制，排行榜服务器暂时关闭，游戏正常开放游玩。',
   },
   {
     date: '2026-10-04',
@@ -2133,8 +2139,7 @@ class Game {
       if (e.target === d.accountPanel) this.closeAccountPanel();
     });
     d.rankBtn.addEventListener('click', () => {
-      /* 维护关停（2026-10-05）：按钮留着，点了只提示。 */
-      if (MAINTENANCE) { this.shopToast('排行榜正在维护中'); return; }
+      /* 维护关停（2026-10-05）：面板照常打开，里面显示维护中（见 openRankPanel）。 */
       this.openRankPanel();
     });
     d.rankClose.addEventListener('click', () => this.closeRankPanel());
@@ -2221,6 +2226,12 @@ class Game {
   async openRankPanel() {
     this.hidePanels();
     this.dom.rankPanel.classList.remove('hidden');
+    /* 维护关停（2026-10-05）：面板照常打开，榜单位置放一句简短说明。
+     * 详细原因走公告（「排行榜维护说明」，见 NOTICE_ITEMS）。 */
+    if (MAINTENANCE) {
+      this.dom.rankList.innerHTML = '<div class="rankMaint">排行榜维护中~</div>';
+      return;
+    }
     await this.refreshRank();
   }
 

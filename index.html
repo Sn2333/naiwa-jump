@@ -617,6 +617,13 @@ if (location.search.indexOf('dbg') >= 0) {
   .rankRow.top2 .no { color: #98A2B3; }
   .rankRow.top3 .no { color: #C1793C; }
   .rankEmpty { text-align: center; color: var(--ink-dim); font-size: 14px; padding: 36px 20px; line-height: 1.8; }
+  /* 维护中占位（2026-10-05 关停）：面板打开时替代榜单的一句话说明 */
+  .rankMaint {
+    text-align: center; padding: 48px 24px; margin-top: 18%;
+    border-radius: 14px; background: var(--row-bg);
+    box-shadow: inset 0 0 0 1px var(--row-line); color: var(--ink-dim);
+    font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  }
   #userTag {
     font-size: 13px; color: var(--ink-dim); margin-top: 4px;
     background: var(--glass); border: 1px solid var(--glass-line);

@@ -80,9 +80,10 @@ const notice = {
   giftLine: (document.querySelector('#noticeBody .noticeGift') || {}).textContent || '',
   giftBtn: !!document.querySelector('#noticeBody .giftBtn'),
   ownedBefore: g.ownsAcc('hat_birthday'),
-  /* 第二条 = 新加的 v1.2 更新说明；第四条（生日帽）必须没有正文 —— 那篇的正文用户要自己写 */
+  /* 第二条 = 置顶的「排行榜维护说明」；第五条（生日帽）必须没有正文 */
   secondTitle: (document.querySelectorAll('#noticeBody .noticeItem .noticeTitle')[1] || {}).textContent || '',
-  fourthBody: !!(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[3]),
+  secondBody: (document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[1] || {}).textContent || '',
+  fifthNoBody: !(document.querySelectorAll('#noticeBody .noticeItem .noticeBody')[4]),
 };
 /* 1b) 公告附赠：点「领取」→ 生日帽进拥有清单、判重键落盘、按钮切成"已领取"。
  *     ★ 生日帽已经**从商店下架**，公告是它唯一的来源，所以这条必须真跑通。 */
@@ -1172,15 +1173,15 @@ const maintOut = (async () => {
   P.nick = ''; P.pid = null;
   g.refreshNickUI();
 
-  /* 榜单按钮：面板不打开，弹维护提示 */
+  /* 榜单按钮：面板照常打开、内容是维护说明（2026-10-05 下午按用户要求改的） */
   g.dom.rankBtn.click();
   await new Promise((r) => setTimeout(r, 60));
   const panel = document.getElementById('rankPanel');
-  const rankBlocked = panel.classList.contains('hidden');
+  const rankMaint = !panel.classList.contains('hidden')
+    && panel.querySelector('#rankList .rankMaint') !== null
+    && panel.querySelector('#rankList .rankMaint').textContent.indexOf('维护中') >= 0;
+  panel.classList.add('hidden');
   const toastEl = document.getElementById('shopToast');
-  const rankToast = toastEl.classList.contains('show')
-    && toastEl.textContent.indexOf('维护中') >= 0;
-  toastEl.classList.remove('show');
 
   /* 保存昵称：profile 不被改，只弹提示（探针作用域没有 profile 模块变量，走 __profile） */
   g.dom.nickInput.value = '测试蛙';
@@ -1203,7 +1204,7 @@ const maintOut = (async () => {
 
   return {
     flag: M.MAINTENANCE === true,
-    tagText, rankBlocked, rankToast, nickBlocked,
+    tagText, rankMaint, nickBlocked,
     lbLocal: lb && lb.local === true,
     pidNoNet: pid === null || typeof pid === 'number',
     subLocal: sub && sub.local === true,
@@ -1214,15 +1215,16 @@ const maint = await maintOut;
 
 /* 落正中心 = perfect：base 1 + 连击 1 的 2 分 = 3，×2 之后必须是 6 */
 const ok = dotOn === true && notice.panel === true && notice.dot === false
-  /* 四条公告：紧急通知(置顶·带正文)→ v1.2(带正文) → v1.1（带正文）→ 生日帽（无正文） */
-  && notice.hasPanel === true && notice.items === 4
+  /* 五条公告：紧急通知(置顶·带正文) → 排行榜维护说明(第二个置顶) → v1.2 → v1.1 → 生日帽（无正文） */
+  && notice.hasPanel === true && notice.items === 5
   && notice.date.indexOf('2026-10-03') >= 0
   && notice.title.indexOf('紧急通知') >= 0
   && notice.pin === '置顶'                            // ★ 紧急公告挂置顶标（且排第一：date 断言已卡）
-  && notice.secondTitle.indexOf('v1.2') >= 0          // ★ 新公告插在置顶之后、v1.1 之前
+  && notice.secondTitle.indexOf('排行榜维护说明') >= 0 // ★ 第二个置顶：维护说明
+  && notice.secondBody.indexOf('账号和分数上传机制') >= 0
   && notice.firstBody.indexOf('浏览器缓存') >= 0 && notice.firstBody.indexOf('建议使用浏览器') >= 0
   && notice.firstBody.indexOf('特此通知') >= 0
-  && notice.fourthBody === false
+  && notice.fifthNoBody === true
   && notice.giftLine.indexOf('生日帽') >= 0 && notice.giftBtn === true
   && notice.ownedBefore === false                     // 弹出来的时候还没领
   /* 领完：进拥有清单、按钮切"已领取"且禁用、判重键落盘、重复触发幂等 */
@@ -1231,7 +1233,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   && gift.keys.indexOf('2026-10-02:hat_birthday') >= 0
   && giftAgain.owned === true && giftAgain.keys === gift.keys.length
   && noticeClosed.panel === false && noticeClosed.dot === false
-  && noticeClosed.seen === '6'                 // NOTICE_VERSION 变了这里要跟着改
+  && noticeClosed.seen === '7'                 // NOTICE_VERSION 变了这里要跟着改
   && noticeClosed.hasPanel === false
   && noticeAgain === false
   /* 商店：生日帽已下架；角色栏放着 50 奶币的大笑奶蛙；装饰栏有头饰 + 背饰 */
@@ -1249,7 +1251,7 @@ const ok = dotOn === true && notice.panel === true && notice.dot === false
   /* 维护模式：榜单/昵称关停，零网络请求，userTag 徽标渲染照常 */
   && maint.flag === true
   && maint.tagText === '#10000001'
-  && maint.rankBlocked === true && maint.rankToast === true
+  && maint.rankMaint === true
   && maint.nickBlocked === true
   && maint.lbLocal === true && maint.subLocal === true && maint.pidNoNet === true
   && maint.netCalls === 0                                            // ★ 一个请求都不许飞出去
